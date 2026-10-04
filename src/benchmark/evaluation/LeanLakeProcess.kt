@@ -21,7 +21,7 @@ class LeanLakeProcess(private val projectRoot: Path): LeanProcess {
         }
 
         val temporary = try {
-            Files.createTempDirectory("lara-lean-")
+            Files.createTempDirectory("astrid-lean-")
         } catch (failure: IOException) {
             return LeanProcessResult.InfrastructureFailure(
                 "could not create temporary Lean directory: ${failure.message}",
