@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:astrid:run-config:v1",
+  "title": "ASTRID run configuration V1",
+  "description": "Input configuration for the run command. This is distinct from the saved runs/<run-id>/run.json summary.",
+  "$comment": "The runner additionally checks that finite model.max_output_tokens does not exceed finite model.context_length. Schema defaults describe runtime behaviour; validation does not insert them.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "model",
+    "samples_per_task",
+    "max_repair_turns",
+    "max_agent_iterations"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S",
+      "description": "Optional editor schema reference, for example ../schemas/run-config-v1.schema.json. It does not affect execution."
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "context_length", "max_output_tokens", "supports_tools"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S",
+          "description": "OpenRouter model ID."
+        },
+        "context_length": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "maximum": 9223372036854775807,
+          "description": "Configured context length in tokens. Null selects OpenRouter's advertised maximum."
+        },
+        "max_output_tokens": {
+          "$ref": "#/$defs/positiveLimit",
+          "description": "Maximum generated tokens per request. Null selects OpenRouter's advertised maximum, bounded by the configured context length. Endpoint constraints still apply."
+        },
+        "supports_tools": {
+          "type": "boolean",
+          "description": "Whether the configured model supports tool calls. False requires both tool budgets to be zero or omitted."
+        }
+      }
+    },
+    "samples_per_task": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647,
+      "description": "Finite number of independent samples for each task."
+    },
+    "max_repair_turns": {
+      "$ref": "#/$defs/nonNegativeLimit",
+      "description": "Maximum repairs after the initial attempt. Zero disables repairs; null removes the local repair cap."
+    },
+    "max_tool_calls_per_attempt": {
+      "$ref": "#/$defs/nonNegativeLimit",
+      "default": 0,
+      "description": "Maximum calls to tools outside the workspace registry per attempt. Omitted or zero permits none; null removes this cap. Resets on repair."
+    },
+    "max_workspace_tool_calls_per_attempt": {
+      "$ref": "#/$defs/nonNegativeLimit",
+      "default": 0,
+      "description": "Maximum workspace tool calls per attempt, including search_files. Omitted or zero disables workspace mode; a positive value or null enables it. Null removes this cap. Resets on repair."
+    },
+    "max_agent_iterations": {
+      "$ref": "#/$defs/positiveLimit",
+      "description": "Maximum model requests across all attempts in one sample. Null removes the local request cap."
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "model": {
+            "type": "object",
+            "properties": {"supports_tools": {"const": false}},
+            "required": ["supports_tools"]
+          }
+        },
+        "required": ["model"]
+      },
+      "then": {
+        "properties": {
+          "max_tool_calls_per_attempt": {"const": 0},
+          "max_workspace_tool_calls_per_attempt": {"const": 0}
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "nonNegativeLimit": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "maximum": 2147483647
+    },
+    "positiveLimit": {
+      "type": ["integer", "null"],
+      "minimum": 1,
+      "maximum": 2147483647
+    }
+  }
+}
