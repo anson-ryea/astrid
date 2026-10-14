@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "paper_id": "paper_1",
+  "context_id": "unrelated",
+  "imports": [
+    "dataset.paper_1.formalisation.Unrelated"
+  ],
+  "files": [
+    "dataset/paper_1/formalisation/Unrelated.lean"
+  ],
+  "closure": {
+    "algorithm": "sha256_length_prefixed_paths_and_contents_v1",
+    "sha256": "66c41a116176a6b206c7e579418af46da8d23183c4c657f7f3af53d76b21d932"
+  }
+}

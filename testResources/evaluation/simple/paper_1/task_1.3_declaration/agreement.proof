@@ -1,0 +1,10 @@
+by
+  unfold AstridSpec.agreement
+  intro n
+  constructor
+  · intro candidate
+    cases candidate with
+    | positive positive => exact AstridReference.Target.positive positive
+  · intro reference
+    cases reference with
+    | positive positive => exact Benchmark.Target.positive positive

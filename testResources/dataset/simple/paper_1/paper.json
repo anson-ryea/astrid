@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "paper_id": "paper_1",
+  "results": [
+    {
+      "id": "definition"
+    },
+    {
+      "id": "statement"
+    },
+    {
+      "id": "declaration"
+    },
+    {
+      "id": "proof"
+    },
+    {
+      "id": "proof_completion"
+    }
+  ]
+}

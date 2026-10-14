@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "task_id": "task_1.5_proof_completion",
+  "excluded_declarations": [
+    "Simple.referenceProof",
+    "Simple.Unrelated.secret"
+  ],
+  "reference_submission": {
+    "path": "paper_1/task_1.5_proof_completion/reference.proof",
+    "sha256": "702d5bddf582f9b929d084fc58f50fe3c286d1173df990f5091844ac5ca99155"
+  }
+}

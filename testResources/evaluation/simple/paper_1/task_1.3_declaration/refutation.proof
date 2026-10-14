@@ -1,0 +1,11 @@
+by
+  unfold AstridSpec.agreement
+  intro agreement
+  have candidate : Benchmark.Target 0 := by
+    first
+    | exact Benchmark.Target.positive
+    | exact Benchmark.Target.positive true
+    | exact Benchmark.Target.extra
+  have reference := (agreement 0).mp candidate
+  cases reference with
+  | positive positive => exact Nat.not_lt_zero 0 positive

@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "task_id": "task_1.3_declaration",
+  "paper_id": "paper_1",
+  "protocol": "lean_declaration",
+  "outputs": [
+    {
+      "name": "Benchmark.Target",
+      "type": "Nat \u2192 Prop"
+    }
+  ],
+  "obligations": [
+    {
+      "name": "AstridSpec.agreement",
+      "proof": {
+        "path": "agreement.proof",
+        "sha256": "7a2f9ecb8df27ba5f8f41e2f27c6da2e6f7b31911398dc250d8bdb8e70cac36f"
+      },
+      "refutation": {
+        "path": "refutation.proof",
+        "sha256": "aabbd21662a261c0dd8ec53f1135dbf15dd456e8ddb77e4c257f647f0a55d979"
+      }
+    }
+  ],
+  "compatibility": [],
+  "reference_submission": {
+    "path": "reference.term",
+    "sha256": "fd49c908f4df9ab74af0ee8dd28abad7e052bdbbb2cd777475ac4697cda451c9"
+  },
+  "reference": {
+    "path": "Reference.lean",
+    "sha256": "8937fb79d220c2a0964deedb5ac5a5c243c54fc1757faa17b5312b28f13df355"
+  },
+  "specification": {
+    "path": "Specification.lean",
+    "sha256": "27f31c2439b6798405e6d722f80fb18cc9a6519d1ce7290ec32945a4421911bb"
+  }
+}

@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "task_id": "task_1.5_proof_completion",
+  "paper_id": "paper_1",
+  "source_result_id": "proof_completion",
+  "task_type": 5,
+  "protocol": "lean_proof",
+  "status": "candidate_pending_independent_review",
+  "condition": "enriched_evidence",
+  "context_id": "proof",
+  "artefacts": [
+    {
+      "role": "lean_context",
+      "path": "Context.lean",
+      "sha256": "246bf7b119f84ae685c833db1ac760daddcd392df5cdf05ce118dbcdf1e499fc"
+    },
+    {
+      "role": "lean_target",
+      "path": "Target.lean",
+      "sha256": "290a52d4405911ad1a274a3856e0e3b7d1fcb490be3b6fbbcd62a6d7ea588c35"
+    },
+    {
+      "role": "enriched_evidence",
+      "path": "evidence.md",
+      "sha256": "e213d33140f10be1347ef955c53f7d705057b60d667953f05c8e878a49d7f5aa"
+    }
+  ],
+  "submission": {
+    "kind": "lean_proof_body",
+    "allow_local_helpers": true,
+    "allow_top_level_declarations": false
+  },
+  "evaluation": {
+    "kind": "lean_kernel",
+    "timeout": "PT3M",
+    "allowed_axioms": [
+      "propext",
+      "Classical.choice",
+      "Quot.sound"
+    ],
+    "forbidden_mechanisms": [
+      "sorry",
+      "admit",
+      "import",
+      "native_decide",
+      "bv_decide",
+      "metaprogramming_escape"
+    ],
+    "forbidden_identifiers": [
+      "Simple.referenceProof",
+      "Simple.Unrelated.secret"
+    ]
+  }
+}

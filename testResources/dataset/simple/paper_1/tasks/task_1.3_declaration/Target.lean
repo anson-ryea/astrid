@@ -1,0 +1,3 @@
+namespace Benchmark
+__BENCHMARK_DECLARATION__
+end Benchmark

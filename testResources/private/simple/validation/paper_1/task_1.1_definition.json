@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "task_id": "task_1.1_definition",
+  "excluded_declarations": [
+    "Simple.referenceProof",
+    "Simple.Unrelated.secret"
+  ],
+  "reference_submission": {
+    "path": "paper_1/task_1.1_definition/reference.term",
+    "sha256": "c793942778a1b93c9cb0d908a197ac13d689b602ef958d8f21d064b8fecc4ae2"
+  }
+}

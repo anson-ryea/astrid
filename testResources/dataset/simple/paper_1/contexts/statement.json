@@ -10,6 +10,6 @@
   ],
   "closure": {
     "algorithm": "sha256_length_prefixed_paths_and_contents_v1",
-    "sha256": "f972a82e22ea97db111d511c70a40502fcc240d2fb0b7acbf60362808ffbacfe"
+    "sha256": "13b2981a3d881a1b69a1e9f41920e1306440a66477235e484c850d443c04ea97"
   }
 }

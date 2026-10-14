@@ -1,4 +1,4 @@
 import Mathlib.Data.Nat.Basic
-namespace Paper1
-def Domain := Nat
-end Paper1
+namespace Simple
+def base : Nat := 1
+end Simple
