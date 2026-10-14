@@ -1,0 +1,16 @@
+package domain
+
+@JvmInline
+value class ContextId(val value: String) {
+    init {
+        require(pattern.matches(value)) {
+            "context identifier must use lower_snake_case: $value"
+        }
+    }
+
+    override fun toString(): String = value
+
+    companion object {
+        private val pattern = Regex("[a-z][a-z0-9_]*")
+    }
+}
