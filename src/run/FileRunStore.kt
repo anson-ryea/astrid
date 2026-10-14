@@ -188,6 +188,10 @@ class FileRunStore(runDirectory: Path) : RunStore {
             JsonPrimitive(specification.maxAgentIterations),
         )
         put(
+            "max_concurrent_tasks",
+            JsonPrimitive(specification.maxConcurrentTasks),
+        )
+        put(
             "task_ids",
             JsonArray(taskIds.map { JsonPrimitive(it.value) }),
         )

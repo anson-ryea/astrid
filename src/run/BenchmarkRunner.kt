@@ -2,11 +2,18 @@ package run
 
 import dataset.TaskPackageVerifier
 import dataset.TaskRepository
-import domain.EvaluationResult
+import domain.BenchmarkTask
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
-/** Runs selected tasks sequentially and saves each sample before continuing. */
+/** Runs tasks concurrently, keeping each task's samples sequential and durably saved. */
 class BenchmarkRunner(
     private val repository: TaskRepository,
     private val selector: TaskSelector,
@@ -29,22 +36,24 @@ class BenchmarkRunner(
         )
 
         try {
-            for (task in tasks) {
-                for (sampleIndex in 1..engine.specification.samplesPerTask) {
-                    val record = engine.run(task, sampleIndex, store::save)
-
-                    when (val result = record.finalResult) {
-                        is EvaluationResult.InfrastructureFailure ->
-                            error("run stopped after infrastructure failure in ${record.taskId} " +
-                                    "sample $sampleIndex: ${result.reason}")
-
-                        is EvaluationResult.NeedsReview ->
-                            error("run stopped because evaluation requires review in " +
-                                    "${record.taskId} sample $sampleIndex: ${result.reason}")
-
-                        else -> Unit
+            val saveMutex = Mutex()
+            coroutineScope {
+                val pendingTasks = Channel<BenchmarkTask>(tasks.size)
+                tasks.forEach { pendingTasks.send(it) }
+                pendingTasks.close()
+                List(minOf(engine.specification.maxConcurrentTasks, tasks.size)) {
+                    // Preparation and evaluation also perform blocking file and process I/O.
+                    async(Dispatchers.IO) {
+                        for (task in pendingTasks) {
+                            for (sampleIndex in 1..engine.specification.samplesPerTask) {
+                                // Every evaluation outcome is a sample result, not a run error.
+                                engine.run(task, sampleIndex) { record ->
+                                    saveMutex.withLock { store.save(record) }
+                                }
+                            }
+                        }
                     }
-                }
+                }.awaitAll()
             }
 
             store.complete()

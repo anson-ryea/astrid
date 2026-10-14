@@ -11,6 +11,7 @@ data class BenchmarkRunSpecification(
     val maxToolCallsPerAttempt: Int?,
     val maxAgentIterations: Int?,
     val maxWorkspaceToolCallsPerAttempt: Int? = 0,
+    val maxConcurrentTasks: Int = 4,
 ) {
     val workspaceToolsEnabled: Boolean
         get() = maxWorkspaceToolCallsPerAttempt != 0
@@ -18,6 +19,7 @@ data class BenchmarkRunSpecification(
     init {
         require(model.id.isNotBlank()) { "model ID must not be blank" }
         require(samplesPerTask > 0) { "samples per task must be positive" }
+        require(maxConcurrentTasks > 0) { "maximum concurrent tasks must be positive" }
         require(maxToolCallsPerAttempt == null || maxToolCallsPerAttempt >= 0) {
             "maximum tool calls per attempt must not be negative"
         }

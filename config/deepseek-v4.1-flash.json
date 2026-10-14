@@ -4,7 +4,7 @@
   "model": {
     "id": "deepseek/deepseek-v4.1-flash",
     "context_length": 1048576,
-    "max_output_tokens": 65536,
+    "max_output_tokens": null,
     "supports_tools": true
   },
   "samples_per_task": 1,

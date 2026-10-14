@@ -56,6 +56,13 @@
       "maximum": 2147483647,
       "description": "Finite number of independent samples for each task."
     },
+    "max_concurrent_tasks": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647,
+      "default": 4,
+      "description": "Maximum tasks running concurrently with Kotlin coroutines. Omitted defaults to four; one runs tasks sequentially. Samples and repairs within each task remain sequential."
+    },
     "max_repair_turns": {
       "$ref": "#/$defs/nonNegativeLimit",
       "description": "Maximum repairs after the initial attempt. Zero disables repairs; null removes the local repair cap."

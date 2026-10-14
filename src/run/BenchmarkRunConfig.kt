@@ -15,6 +15,7 @@ data class BenchmarkRunConfig(
     val maxAgentIterations: Int?,
     val maxToolCallsPerAttempt: Int? = 0,
     val maxWorkspaceToolCallsPerAttempt: Int? = 0,
+    val maxConcurrentTasks: Int = 4,
 ) {
     init {
         require(modelId.isNotBlank()) { "model ID must not be blank" }
@@ -26,6 +27,7 @@ data class BenchmarkRunConfig(
             "maximum output tokens must not exceed context length"
         }
         require(samplesPerTask > 0) { "samples per task must be positive" }
+        require(maxConcurrentTasks > 0) { "maximum concurrent tasks must be positive" }
         require(maxRepairTurns == null || maxRepairTurns >= 0) { "maximum repair turns must not be negative" }
         require(maxAgentIterations == null || maxAgentIterations > 0) { "maximum agent iterations must be positive" }
         require(maxToolCallsPerAttempt == null || maxToolCallsPerAttempt >= 0) {
@@ -56,5 +58,6 @@ data class BenchmarkRunConfig(
         maxToolCallsPerAttempt = maxToolCallsPerAttempt,
         maxAgentIterations = maxAgentIterations,
         maxWorkspaceToolCallsPerAttempt = maxWorkspaceToolCallsPerAttempt,
+        maxConcurrentTasks = maxConcurrentTasks,
     )
 }

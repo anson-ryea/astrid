@@ -45,7 +45,7 @@ class JsonBenchmarkRunConfigReader {
                 "samples_per_task",
                 "max_repair_turns",
                 "max_agent_iterations",
-            ) + document.keys.intersect(setOf("\$schema", "max_tool_calls_per_attempt", "max_workspace_tool_calls_per_attempt")),
+            ) + document.keys.intersect(setOf("\$schema", "max_tool_calls_per_attempt", "max_workspace_tool_calls_per_attempt", "max_concurrent_tasks")),
         )
         require(document.requiredInt("schema_version") == 1) {
             "unsupported run config schema version"
@@ -75,6 +75,9 @@ class JsonBenchmarkRunConfigReader {
             maxWorkspaceToolCallsPerAttempt = if ("max_workspace_tool_calls_per_attempt" in document) {
                 document.requiredNullableInt("max_workspace_tool_calls_per_attempt")
             } else 0,
+            maxConcurrentTasks = if ("max_concurrent_tasks" in document) {
+                document.requiredInt("max_concurrent_tasks")
+            } else 4,
         )
     }
 
