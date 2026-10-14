@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "task_id": "task_1.2_statement",
+  "paper_id": "paper_1",
+  "source_result_id": "statement",
+  "task_type": 1,
+  "protocol": "lean_statement",
+  "status": "candidate_pending_independent_review",
+  "condition": "synthetic",
+  "context_id": "statement",
+  "artefacts": [
+    {
+      "role": "lean_context",
+      "path": "Context.lean",
+      "sha256": "246bf7b119f84ae685c833db1ac760daddcd392df5cdf05ce118dbcdf1e499fc"
+    },
+    {
+      "role": "lean_target",
+      "path": "Target.lean",
+      "sha256": "c1b053ce749461f5a0154941a96569f8fae4260ebd5257308dda7a2cdbc1f64e"
+    },
+    {
+      "role": "paper_evidence",
+      "path": "evidence.md",
+      "sha256": "fa8950a995855161b2e133cfe4a50e6347be95c5a0ad16919f4f7276c42424bc"
+    }
+  ],
+  "submission": {
+    "kind": "lean_statement",
+    "allow_local_helpers": false,
+    "allow_top_level_declarations": false
+  },
+  "evaluation": {
+    "kind": "lean_semantic",
+    "timeout": "PT3M",
+    "allowed_axioms": [
+      "propext",
+      "Classical.choice",
+      "Quot.sound"
+    ],
+    "forbidden_mechanisms": [
+      "sorry",
+      "admit",
+      "import",
+      "native_decide",
+      "bv_decide",
+      "metaprogramming_escape"
+    ],
+    "forbidden_identifiers": [],
+    "contract": {
+      "path": "paper_1/task_1.2_statement/contract.json",
+      "sha256": "f74f8e8b984659dedc38a214e3c096f2120d01e233a6698f94ecb82fb6474d6e"
+    }
+  }
+}

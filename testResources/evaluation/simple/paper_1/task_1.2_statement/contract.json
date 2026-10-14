@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "task_id": "task_1.2_statement",
+  "paper_id": "paper_1",
+  "protocol": "lean_statement",
+  "outputs": [
+    {
+      "name": "Benchmark.target",
+      "type": "\u2200 (limit : Nat) (positive : 0 < limit) (value : Nat), Prop"
+    }
+  ],
+  "reference_submission": {
+    "path": "reference.term",
+    "sha256": "8a94b7678f288e9f46fdb4f0c880c89b0f4196b104e567e7ebf90ee4c35b6fa8"
+  },
+  "reference": {
+    "path": "Reference.lean",
+    "sha256": "e9f8a1105ce967bbfc7bc485e9c5d405136077eb3956e4a15cd1526cb929d012"
+  },
+  "specification": {
+    "path": "Specification.lean",
+    "sha256": "81adaa823889af88cf3115aba12b9e284ac375d0415da2dffebdefc1eb83965e"
+  },
+  "obligations": [
+    {
+      "name": "AstridSpec.agreement",
+      "proof": {
+        "path": "agreement.proof",
+        "sha256": "252a95c0b748d5090742a5ae2514f1803fed71525ea58580855466e0862d1edf"
+      },
+      "refutation": {
+        "path": "refutation.proof",
+        "sha256": "854992562cab396862ceeb36e85b64b66325abd3604a77812ab5f620a846d5b8"
+      }
+    }
+  ],
+  "compatibility": [
+    {
+      "name": "AstridSpec.compatibility",
+      "proof": {
+        "path": "compatibility.proof",
+        "sha256": "d2a2d1a2cb7215cf9e60458e807617f65575df316def729f790d9cdf404c6e3c"
+      }
+    }
+  ]
+}

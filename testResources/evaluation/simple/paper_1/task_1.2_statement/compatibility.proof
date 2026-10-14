@@ -1,0 +1,5 @@
+by
+  unfold AstridSpec.compatibility
+  intros
+  simp [Benchmark.target]
+  all_goals omega

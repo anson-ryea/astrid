@@ -1,0 +1,5 @@
+by
+  unfold AstridSpec.agreement
+  intro h
+  have bad := h 0
+  simp [AstridSpec.agreement, Benchmark.target, AstridReference.target] at bad

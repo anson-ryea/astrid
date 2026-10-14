@@ -1,0 +1,5 @@
+by
+  unfold AstridSpec.agreement
+  intros
+  simp [Benchmark.target, AstridReference.target, Nat.add_comm]
+  all_goals omega

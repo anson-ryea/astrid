@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "paper_id": "paper_1",
+  "context_id": "statement",
+  "imports": [
+    "dataset.paper_1.formalisation.Context"
+  ],
+  "files": [
+    "dataset/paper_1/formalisation/Context.lean"
+  ],
+  "closure": {
+    "algorithm": "sha256_length_prefixed_paths_and_contents_v1",
+    "sha256": "f972a82e22ea97db111d511c70a40502fcc240d2fb0b7acbf60362808ffbacfe"
+  }
+}
