@@ -65,7 +65,9 @@ class LeanSubmissionPolicy {
         }
 
         for (identifier in evaluationSpecification.forbiddenIdentifiers) {
-            if (Regex(Regex.escape(identifier), RegexOption.IGNORE_CASE)
+            // Lean names are case-sensitive; a permitted type or longer name
+            // must not be mistaken for the forbidden theorem it resembles.
+            if (Regex("""(?<![\p{L}\p{N}_'])${Regex.escape(identifier)}(?![\p{L}\p{N}_'])""")
                     .containsMatchIn(submission)
             ) {
                 return EvaluationResult.Rejected("forbidden identifier: $identifier")

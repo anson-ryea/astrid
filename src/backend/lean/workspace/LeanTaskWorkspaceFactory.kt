@@ -6,7 +6,7 @@ import backend.lean.evaluation.LeanProofEvaluator
 import backend.lean.evaluation.LeanSemanticEvaluator
 import backend.lean.evaluation.LeanSemanticContractReader
 import backend.lean.evaluation.LeanSemanticSourceBuilder
-import dataset.HashCalculator
+import backend.lean.LeanInputFiles
 import dataset.TaskPackageVerifier
 import domain.BenchmarkTask
 import java.nio.file.Files
@@ -15,11 +15,6 @@ import java.nio.file.Path
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.toJavaDuration
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.intOrNull
 import prompt.PromptRenderer
 import workspace.TaskWorkspace
 import workspace.TaskWorkspaceFactory
@@ -37,49 +32,17 @@ class LeanTaskWorkspaceFactory(
     private val evaluationRoot: Path = environmentRoot.resolve("private/evaluation"),
     private val semanticSources: LeanSemanticSourceBuilder = LeanSemanticSourceBuilder(),
 ) : TaskWorkspaceFactory {
-    private val environmentRoot = environmentRoot.toAbsolutePath().normalize()
-    private val datasetRoot = datasetRoot.toAbsolutePath().normalize()
+    private val environmentRoot = LeanInputFiles.root(environmentRoot)
+    private val contexts = LeanContextReader(datasetRoot)
 
     /** Validate and snapshot inputs before any provider calls. No golden files are read. */
     override fun prepare(task: BenchmarkTask): Plan {
         require(task.manifest.protocol.value in setOf("lean_proof", "lean_definition", "lean_declaration", "lean_statement")) { "unsupported Lean workspace protocol" }
         TaskPackageVerifier().verify(task)
-        val paper = task.manifest.paperId.value
         val contextId = task.manifest.contextId.value
-        val contextPath = datasetRoot.resolve("$paper/contexts/$contextId.json")
-        val metadata = readRegular(contextPath, datasetRoot)
-        val document = Json.parseToJsonElement(metadata) as? JsonObject
-            ?: error("context metadata must be an object")
-        require((document["schema_version"] as? JsonPrimitive)?.intOrNull == 1) { "unsupported context schema version" }
-        require(document.string("context_id") == contextId && document.string("paper_id") == paper) {
-            "context metadata identity does not match task"
-        }
-        val imports = document.strings("imports")
-        require(imports.isNotEmpty() && imports.distinct().size == imports.size) { "context imports must be non-empty and unique" }
-        val declaredFiles = document.strings("files")
-        val closure = document["closure"] as? JsonObject ?: error("missing context closure")
-        require(closure.string("algorithm") == "sha256_length_prefixed_paths_and_contents_v1") {
-            "unsupported context closure hash algorithm"
-        }
-
-        val sources = linkedMapOf<String, String>()
-        val visiting = mutableSetOf<String>()
-        fun visit(module: String) {
-            require(module.matches(Regex("dataset\\.${Regex.escape(paper)}\\.formalisation\\.[A-Za-z0-9_.]+"))) {
-                "context import must be a public formalisation module: $module"
-            }
-            val relative = module.replace('.', '/') + ".lean"
-            if (relative in sources) return
-            require(visiting.add(module)) { "cyclic context imports: $module" }
-            val source = readRegular(datasetRoot.resolve(relative.removePrefix("dataset/")), datasetRoot)
-            sourceImports(source).filter { it.startsWith("dataset.") }.forEach(::visit)
-            visiting.remove(module)
-            sources[relative] = source
-        }
-        imports.forEach(::visit)
-        require(sources.keys.toList() == declaredFiles) { "context file list does not match its import closure" }
-        val closureHash = HashCalculator().sha256Closure(sources).value
-        require(closureHash == closure.string("sha256")) { "context closure hash mismatch: $contextId" }
+        val contextMetadata = contexts.read(task)
+        val imports = contextMetadata.imports
+        val closureHash = contextMetadata.sha256
 
         val packagePath = "tasks/${task.manifest.taskId.value}"
         val artefacts = task.manifest.artefacts.associate { artefact ->
@@ -109,8 +72,8 @@ class LeanTaskWorkspaceFactory(
             Regex("(?s)globs\\s*=\\s*\\[.*?]"), "globs = [\"dataset.+\"]")
         // No host dataset .olean files are reused: these modules are built from this closure.
         require(Files.isDirectory(environmentRoot.resolve(".lake/packages"))) { "Lake package cache is missing; run lake build first" }
-        inputs.putAll(sources)
-        inputs["contexts/$contextId.json"] = metadata
+        inputs.putAll(contextMetadata.sources)
+        inputs["contexts/$contextId.json"] = contextMetadata.metadata
         inputs["$packagePath/manifest.json"] = readRegular(task.packageDirectory.resolve("manifest.json"), task.packageDirectory)
         inputs.putAll(artefacts)
         val instructions = PromptRenderer(promptRoot.resolve("common/v1/workspace.md")).render(emptyMap()) +
@@ -167,27 +130,10 @@ class LeanTaskWorkspaceFactory(
         return Files.readString(normal)
     }
 
-    private fun JsonObject.string(name: String): String {
-        val value = this[name] as? JsonPrimitive
-        require(value != null && value.isString) { "context field $name must be a string" }
-        return value.content
-    }
-
-    private fun JsonObject.strings(name: String): List<String> {
-        val values = this[name] as? JsonArray ?: error("context field $name must be an array")
-        return values.map {
-            val value = it as? JsonPrimitive
-            require(value != null && value.isString) { "context field $name must contain strings" }
-            value.content
-        }
-    }
-
     companion object {
         private val publicRoles = setOf("lean_context", "lean_target", "paper_evidence", "enriched_evidence")
 
-        internal fun sourceImports(source: String): List<String> = Regex("(?m)^import\\s+([^\\r\\n]+)")
-            .findAll(source).flatMap { it.groupValues[1].substringBefore("--").trim().split(Regex("\\s+")).asSequence() }
-            .filter { it.isNotEmpty() }.toList()
+        internal fun sourceImports(source: String): List<String> = LeanContextReader.sourceImports(source)
 
         private fun buildLeanDependencies(root: Path, imports: List<String>) {
             val output = root.resolve(".lake/workspace-build.log")
