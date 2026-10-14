@@ -28,7 +28,7 @@ data class BenchmarkRunSpecification(
             "maximum agent iterations must be positive"
         }
         require(model.maxOutputTokens == null ||
-                model.maxOutputTokens in 1..Int.MAX_VALUE.toLong()) {
+                model.maxOutputTokens in 1L..Int.MAX_VALUE.toLong()) {
             "maximum output tokens must fit Koog's request limit"
         }
         require(
