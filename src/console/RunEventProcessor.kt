@@ -12,10 +12,12 @@ import run.RunEvent
  * Collects concurrent execution events through a bounded queue and reduces them in one coroutine.
  * The caller owns [scope] and must call [closeAndJoin] after producers finish to drain pending events.
  * Cancelling the scope stops processing and releases suspended producers, discarding pending events.
+ * [onEventProcessed] runs in the consumer after each reduction, for output that must retain every milestone.
  */
 class RunEventProcessor(
     scope: CoroutineScope,
     capacity: Int = 64,
+    private val onEventProcessed: (RunEvent) -> Unit = {},
 ) {
     init {
         require(capacity in 1 until Channel.UNLIMITED) { "event queue capacity must be positive and bounded" }
@@ -30,6 +32,7 @@ class RunEventProcessor(
     private val consumer = scope.launch {
         for (event in events) {
             currentState.value = currentState.value.reduce(event)
+            onEventProcessed(event)
         }
     }.also { job ->
         // Also runs if the scope is cancelled before the consumer starts.

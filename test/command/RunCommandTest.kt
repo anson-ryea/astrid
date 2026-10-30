@@ -2,6 +2,10 @@ package command
 
 import ai.koog.prompt.llm.LLMCapability
 import com.github.ajalt.clikt.command.parse
+import com.github.ajalt.clikt.core.terminal
+import com.github.ajalt.mordant.rendering.AnsiLevel
+import com.github.ajalt.mordant.terminal.Terminal
+import com.github.ajalt.mordant.terminal.TerminalRecorder
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.test.Test
@@ -15,6 +19,7 @@ import kotlin.test.assertNull
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.io.TempDir
 import run.JsonBenchmarkRunConfigReader
+import support.SimpleTestDataset
 
 class RunCommandTest {
     @TempDir
@@ -226,6 +231,38 @@ class RunCommandTest {
             assertContains(failure.message.orEmpty(), "run ID must use lower-case letters, digits, underscores or hyphens")
             assertFalse(Files.exists(temporaryDirectory.resolve("runs")))
         }
+    }
+
+    @Test
+    fun activatesTheDashboardBeforePreflightAndCleansUpOnPreflightFailure() = runBlocking {
+        val source = SimpleTestDataset.task("proof")
+        val taskDirectory = temporaryDirectory.resolve("dataset/paper_1/tasks/${source.manifest.taskId}")
+        Files.createDirectories(taskDirectory)
+        Files.writeString(taskDirectory.resolve("manifest.json"),
+            Files.readString(source.packageDirectory.resolve("manifest.json"))
+                .replace("candidate_pending_independent_review", "frozen"))
+        val recorder = TerminalRecorder(ansiLevel = AnsiLevel.NONE, width = 120)
+        val command = RunCommand(temporaryDirectory, apiKeyProvider = { error("API key must not be read") })
+        command.configureContext { terminal = Terminal(terminalInterface = recorder) }
+
+        assertFailsWith<java.nio.file.NoSuchFileException> {
+            // Missing prompt files fail preflight, before any credentials or model requests.
+            command.parse(listOf(writeConfig(validConfig).toString(), "test-run", "--ui=live"))
+        }
+        assertContains(recorder.output(), "PREPARING")
+        assertContains(recorder.output(), "FAILED")
+        assertTrue(recorder.output().endsWith("\u001b[?25h"))
+        assertFalse(Files.exists(temporaryDirectory.resolve("runs")))
+    }
+
+    @Test
+    fun validatesUiModeBeforeExecution() = runBlocking {
+        val command = RunCommand(temporaryDirectory, apiKeyProvider = { error("API key must not be read") })
+        val failure = assertFails {
+            command.parse(listOf(writeConfig("not JSON").toString(), "test-run", "--ui=invalid"))
+        }
+        assertContains(failure.message.orEmpty(), "invalid")
+        assertContains(failure.message.orEmpty(), "live")
     }
 
     private fun writeConfig(contents: String): Path {

@@ -3,6 +3,11 @@ package run
 import ai.koog.prompt.message.Message
 import ai.koog.prompt.message.ResponseMetaInfo
 import console.RunEventProcessor
+import console.RunConsole
+import console.RunConsoleMode
+import console.RunDashboardContext
+import com.github.ajalt.mordant.terminal.Terminal
+import com.github.ajalt.mordant.terminal.TerminalRecorder
 import dataset.TaskRepository
 import domain.BenchmarkTask
 import domain.EvaluationKind
@@ -23,6 +28,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlin.test.assertNull
+import kotlin.test.assertContains
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
@@ -406,6 +412,31 @@ class BenchmarkRunnerTest {
         assertEquals(RunEvent.PhaseChanged(task.manifest.taskId, 1, SamplePhase.Evaluating),
             processor.state.value.latestEvent)
         assertEquals("fail", store.events.last())
+    }
+
+    @Test
+    fun consoleShowsPersistedConcurrentResultsBeforeReturning() = runBlocking {
+        val tasks = (1..4).map { createRunTask(temporaryDirectory, id = "task_1.${it}_theorem_11") }
+        for (mode in listOf(RunConsoleMode.Live, RunConsoleMode.Plain)) {
+            val recorder = TerminalRecorder(width = 120)
+            val store = RecordingRunStore()
+            val console = RunConsole(Terminal(terminalInterface = recorder), RunDashboardContext(
+                "test-run", "test-model", temporaryDirectory,
+                tasks.associate { it.manifest.taskId to it.manifest.submission.kind }, 2,
+            ), mode = mode)
+            withTimeout(10_000.milliseconds) {
+                console.run { onEvent ->
+                    onEvent(RunEvent.RunPhaseChanged(RunPhase.Running))
+                    runner(tasks, ScriptedPromptExecutor(List(8) { "proof" }), store,
+                        specification = runTestSpecification(samplesPerTask = 2), onEvent = onEvent).run()
+                }
+            }
+            assertEquals(8, store.records.size)
+            assertContains(recorder.output(), "8 success")
+            assertContains(recorder.output(), "4/4 tasks")
+            assertContains(recorder.output(), "8/8 samples")
+            assertContains(recorder.output(), "COMPLETE")
+        }
     }
 
     @Test

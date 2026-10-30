@@ -5,6 +5,8 @@ import domain.TaskId
 
 /** Execution updates, independent of terminal rendering and persisted agent trajectories. */
 sealed interface RunEvent {
+    data class RunPhaseChanged(val phase: RunPhase) : RunEvent
+
     data class SampleStarted(
         val taskId: TaskId,
         val sampleIndex: Int,

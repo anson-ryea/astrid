@@ -4,19 +4,25 @@ import backend.BackendRegistry
 import backend.lean.LeanBackend
 import com.github.ajalt.clikt.command.SuspendingCliktCommand
 import com.github.ajalt.clikt.core.Context
+import com.github.ajalt.clikt.core.terminal
 import com.github.ajalt.clikt.parameters.arguments.argument
 import com.github.ajalt.clikt.parameters.arguments.check
 import com.github.ajalt.clikt.parameters.options.default
 import com.github.ajalt.clikt.parameters.options.option
 import com.github.ajalt.clikt.parameters.types.path
-import console.RunEventProcessor
+import com.github.ajalt.clikt.parameters.types.choice
+import console.RunConsole
+import console.RunConsoleMode
+import console.RunDashboardContext
 import dataset.FileTaskRepository
 import dataset.JsonTaskManifestReader
 import dataset.TaskPackageVerifier
 import io.github.cdimascio.dotenv.dotenv
 import java.nio.file.Files
 import java.nio.file.Path
-import kotlinx.coroutines.coroutineScope
+import kotlin.time.TimeSource
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import model.OpenRouterConnection
 import prompt.PromptRenderer
 import run.BenchmarkRunner
@@ -24,6 +30,8 @@ import run.FileRunStore
 import run.JsonBenchmarkRunConfigReader
 import run.TaskRunEngine
 import run.TaskSelector
+import run.RunEvent
+import run.RunPhase
 
 /** Runs reviewed tasks using a registered backend and configured OpenRouter model. */
 class RunCommand(
@@ -60,8 +68,12 @@ class RunCommand(
         "--environment-root",
         help = "Pinned backend project and dependency cache; defaults to the Astrid project",
     ).path(mustExist = true, canBeFile = false)
+    private val uiMode by option("--ui", help = "Dashboard mode: auto detects a terminal, live forces animation, plain prints milestones")
+        .choice("auto" to RunConsoleMode.Auto, "live" to RunConsoleMode.Live, "plain" to RunConsoleMode.Plain)
+        .default(RunConsoleMode.Auto)
 
     override suspend fun run() {
+        val startedAt = TimeSource.Monotonic.markNow()
         val specification = configReader.read(configPath).toSpecification()
         val repository = FileTaskRepository(
             datasetRoot,
@@ -91,14 +103,6 @@ class RunCommand(
         val repairPromptRenderer = PromptRenderer(
             promptDirectory.resolve("repair.md"),
         )
-        systemPromptRenderer.render(emptyMap())
-        repairPromptRenderer.render(mapOf("DIAGNOSTIC" to "preflight"))
-        selected.forEach { task ->
-            verifier.verify(task)
-            backend.preflight(task)
-            workspaceFactory?.prepare(task)
-        }
-
         val runsDirectory = projectRoot.resolve("runs")
         check(!Files.isSymbolicLink(runsDirectory)) {
             "runs directory must not be a symbolic link: $runsDirectory"
@@ -108,37 +112,50 @@ class RunCommand(
             "run directory already exists: $runDirectory"
         }
 
-        val apiKey = apiKeyProvider()?.takeIf(String::isNotBlank)
-            ?: error("OPENROUTER_API_KEY is missing")
-
-        OpenRouterConnection(apiKey).use { connection ->
-            val resolvedSpecification = specification.copy(model = connection.resolveModel(specification.model))
-            Files.createDirectories(runsDirectory)
-
-            val engine = TaskRunEngine(
-                protocols = protocols,
-                evaluators = backend.evaluators,
-                promptExecutor = connection.promptExecutor,
-                specification = resolvedSpecification,
-                systemPromptRenderer = systemPromptRenderer,
-                repairPromptRenderer = repairPromptRenderer,
-                packageVerifier = verifier,
-                workspaceFactory = workspaceFactory,
-            )
-            coroutineScope {
-                val events = RunEventProcessor(this)
-                try {
-                    BenchmarkRunner(
-                        repository = repository,
-                        selector = selector,
-                        engine = engine,
-                        store = FileRunStore(runDirectory),
-                        packageVerifier = verifier,
-                        onEvent = events::emit,
-                    ).run()
-                } finally {
-                    events.closeAndJoin()
+        val console = RunConsole(terminal, RunDashboardContext(
+            runId = runId,
+            modelId = specification.model.id,
+            datasetRoot = datasetRoot,
+            taskSubmissions = selected.associate { it.manifest.taskId to it.manifest.submission.kind },
+            samplesPerTask = specification.samplesPerTask,
+        ), startedAt, uiMode)
+        console.run { onEvent ->
+            onEvent(RunEvent.RunPhaseChanged(RunPhase.Preparing))
+            // Preflight can compile Lean or perform blocking filesystem/process I/O.
+            withContext(Dispatchers.IO) {
+                systemPromptRenderer.render(emptyMap())
+                repairPromptRenderer.render(mapOf("DIAGNOSTIC" to "preflight"))
+                selected.forEach { task ->
+                    verifier.verify(task)
+                    backend.preflight(task)
+                    workspaceFactory?.prepare(task)
                 }
+            }
+            val apiKey = apiKeyProvider()?.takeIf(String::isNotBlank)
+                ?: error("OPENROUTER_API_KEY is missing")
+            onEvent(RunEvent.RunPhaseChanged(RunPhase.ResolvingModel))
+            OpenRouterConnection(apiKey).use { connection ->
+                val resolvedSpecification = specification.copy(model = connection.resolveModel(specification.model))
+                withContext(Dispatchers.IO) { Files.createDirectories(runsDirectory) }
+                val engine = TaskRunEngine(
+                    protocols = protocols,
+                    evaluators = backend.evaluators,
+                    promptExecutor = connection.promptExecutor,
+                    specification = resolvedSpecification,
+                    systemPromptRenderer = systemPromptRenderer,
+                    repairPromptRenderer = repairPromptRenderer,
+                    packageVerifier = verifier,
+                    workspaceFactory = workspaceFactory,
+                )
+                onEvent(RunEvent.RunPhaseChanged(RunPhase.Running))
+                BenchmarkRunner(
+                    repository = repository,
+                    selector = selector,
+                    engine = engine,
+                    store = FileRunStore(runDirectory),
+                    packageVerifier = verifier,
+                    onEvent = onEvent,
+                ).run()
             }
         }
 

@@ -55,4 +55,19 @@ class RunDashboardStateTest {
         assertEquals(1, state.needsReviewSamples)
         assertEquals(1, state.infrastructureFailureSamples)
     }
+
+    @Test
+    fun retainsOnlyRecentDiagnosticsAndCountsCompletedSamplesPerTask() {
+        var state = RunDashboardState()
+        for (sample in 1..25) {
+            state = state.reduce(RunEvent.SampleFinished(taskId, sample, EvaluationResult.Rejected("retry")))
+        }
+        val previous = state
+        state = state.reduce(RunEvent.SampleFinished(taskId, 26, EvaluationResult.Accepted))
+
+        assertEquals(26, state.completedSamplesByTask[taskId])
+        assertEquals(25, previous.completedSamplesByTask[taskId])
+        assertEquals((6..25).toList(), state.recentDiagnostics.map { it.sampleIndex })
+        assertEquals(previous.recentDiagnostics, state.recentDiagnostics)
+    }
 }
