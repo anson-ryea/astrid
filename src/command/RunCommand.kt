@@ -9,12 +9,14 @@ import com.github.ajalt.clikt.parameters.arguments.check
 import com.github.ajalt.clikt.parameters.options.default
 import com.github.ajalt.clikt.parameters.options.option
 import com.github.ajalt.clikt.parameters.types.path
+import console.RunEventProcessor
 import dataset.FileTaskRepository
 import dataset.JsonTaskManifestReader
 import dataset.TaskPackageVerifier
 import io.github.cdimascio.dotenv.dotenv
 import java.nio.file.Files
 import java.nio.file.Path
+import kotlinx.coroutines.coroutineScope
 import model.OpenRouterConnection
 import prompt.PromptRenderer
 import run.BenchmarkRunner
@@ -123,13 +125,21 @@ class RunCommand(
                 packageVerifier = verifier,
                 workspaceFactory = workspaceFactory,
             )
-            BenchmarkRunner(
-                repository = repository,
-                selector = selector,
-                engine = engine,
-                store = FileRunStore(runDirectory),
-                packageVerifier = verifier,
-            ).run()
+            coroutineScope {
+                val events = RunEventProcessor(this)
+                try {
+                    BenchmarkRunner(
+                        repository = repository,
+                        selector = selector,
+                        engine = engine,
+                        store = FileRunStore(runDirectory),
+                        packageVerifier = verifier,
+                        onEvent = events::emit,
+                    ).run()
+                } finally {
+                    events.closeAndJoin()
+                }
+            }
         }
 
         echo("Benchmark run complete: $runDirectory")

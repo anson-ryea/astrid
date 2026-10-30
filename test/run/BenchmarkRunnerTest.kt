@@ -2,6 +2,7 @@ package run
 
 import ai.koog.prompt.message.Message
 import ai.koog.prompt.message.ResponseMetaInfo
+import console.RunEventProcessor
 import dataset.TaskRepository
 import domain.BenchmarkTask
 import domain.EvaluationKind
@@ -365,6 +366,46 @@ class BenchmarkRunnerTest {
         assertIs<EvaluationResult.InfrastructureFailure>(finished.result)
         assertEquals(store.records.single().finalResult, finished.result)
         assertEquals("complete", store.events.last())
+    }
+
+    @Test
+    fun eventProcessorCollectsConcurrentRunnerUpdatesThroughCompletion() = runBlocking {
+        val tasks = (1..4).map { createRunTask(temporaryDirectory, id = "task_1.${it}_theorem_11") }
+        val processor = RunEventProcessor(this, capacity = 1)
+        val store = RecordingRunStore()
+        try {
+            runner(tasks, ScriptedPromptExecutor(List(8) { "proof" }), store,
+                specification = runTestSpecification(samplesPerTask = 2),
+                onEvent = processor::emit).run()
+        } finally {
+            processor.closeAndJoin()
+        }
+
+        assertEquals(8, processor.state.value.acceptedSamples)
+        assertTrue(processor.state.value.activeSamples.isEmpty())
+        assertEquals(store.records.size, processor.state.value.completedSamples)
+        assertEquals("complete", store.events.last())
+    }
+
+    @Test
+    fun eventProcessorDrainsUpdatesWhenTheRunnerFails() = runBlocking {
+        val task = createRunTask(temporaryDirectory)
+        val processor = RunEventProcessor(this)
+        val store = RecordingRunStore(saveFailure = IllegalStateException("disk unavailable"))
+        val failure = assertFailsWith<IllegalStateException> {
+            try {
+                runner(listOf(task), ScriptedPromptExecutor(listOf("proof")), store,
+                    onEvent = processor::emit).run()
+            } finally {
+                processor.closeAndJoin()
+            }
+        }
+
+        assertEquals("disk unavailable", failure.message)
+        assertEquals(0, processor.state.value.completedSamples)
+        assertEquals(RunEvent.PhaseChanged(task.manifest.taskId, 1, SamplePhase.Evaluating),
+            processor.state.value.latestEvent)
+        assertEquals("fail", store.events.last())
     }
 
     @Test
