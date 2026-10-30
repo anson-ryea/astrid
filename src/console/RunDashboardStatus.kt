@@ -1,5 +1,5 @@
 package console
 
 enum class RunDashboardStatus {
-    Running, Complete, Failed, Cancelled
+    Running, Quitting, Complete, Failed, Cancelled
 }

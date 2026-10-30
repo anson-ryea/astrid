@@ -20,7 +20,6 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.cancelAndJoin
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -28,6 +27,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import run.RunEvent
 
 enum class RunConsoleMode { Auto, Live, Plain }
@@ -63,6 +64,7 @@ class RunConsole(
         )
     }
     private val dashboard = RunDashboard(context)
+    private val info = RunInfo(context)
 
     /** Prints a status message using the same colour policy as this run's output mode. */
     internal fun printMessage(message: String, colour: TextColors = TextColors.blue) {
@@ -76,7 +78,8 @@ class RunConsole(
         KotlinLoggingConfiguration.logStartupMessage = false
         KotlinLogging.logger("astrid.console")
         val logs = RunLogs()
-        val showLogs = MutableStateFlow(false)
+        val quitting = MutableStateFlow(false)
+        val page = MutableStateFlow(RunConsolePage.Dashboard)
         val events = RunEventProcessor(this, onEventProcessed = { event ->
             event.logEntry()?.let { entry ->
                 if (live) logs.append(entry) else output.println(entry.renderMessage())
@@ -85,10 +88,19 @@ class RunConsole(
         val animation = if (live) output.animation<Widget> { it } else null
         var rawMode: RawModeScope? = null
         fun frame(status: RunDashboardStatus): Widget {
-            val controls = rawMode != null && status == RunDashboardStatus.Running
-            return if (showLogs.value) logs.render(output.size.width, output.size.height, controls)
-            else dashboard.render(events.state.value, startedAt.elapsedNow(), output.size.width,
-                output.size.height, status, controlsEnabled = controls)
+            val visibleStatus = if (quitting.value && status == RunDashboardStatus.Running)
+                RunDashboardStatus.Quitting else status
+            val controls = rawMode != null && visibleStatus == RunDashboardStatus.Running
+            return when (page.value) {
+                RunConsolePage.Logs -> logs.render(output.size.width, output.size.height, controls, visibleStatus)
+                RunConsolePage.Info -> info.render(output.size.width, output.size.height, controls, visibleStatus)
+                RunConsolePage.Dashboard -> dashboard.render(events.state.value, startedAt.elapsedNow(), output.size.width,
+                    output.size.height, visibleStatus, controlsEnabled = controls)
+            }
+        }
+        val paintMutex = Mutex()
+        suspend fun paint(status: RunDashboardStatus) {
+            paintMutex.withLock { animation?.update(frame(status)) }
         }
         var status = RunDashboardStatus.Running
         var runFailure: Throwable? = null
@@ -105,17 +117,37 @@ class RunConsole(
                 rawMode = if (inputInteractive) output.enterRawModeOrNull() else null
                 output.cursor.hide()
                 // Paint synchronously so even preflight work starts with a visible dashboard.
-                animation.update(frame(status))
+                paint(status)
                 rawMode?.let { input ->
-                    val runScope = this
                     keyboard = launch {
                         while (isActive) {
                             val key = withContext(Dispatchers.IO) { input.readKeyOrNull(100.milliseconds) }
                             when {
                                 key == null -> delay(10.milliseconds)
-                                key.isCtrlC -> runScope.cancel(CancellationException("Run interrupted"))
-                                key.key == "q" && !key.ctrl && !key.alt -> execution.cancel(RunQuitException())
-                                key.key == "l" && !key.ctrl && !key.alt -> showLogs.update { !it }
+                                key.isCtrlC || (key.key == "q" && !key.ctrl && !key.alt) -> {
+                                    if (quitting.compareAndSet(false, true)) {
+                                        logs.append(RunLogEntry("QUITTING: Stopping active tasks and finalising run metadata"))
+                                        // Acknowledge before cancellation, then keep painting during worker cleanup.
+                                        try { paint(RunDashboardStatus.Running) } finally {
+                                            execution.cancel(if (key.isCtrlC) CancellationException("Run interrupted")
+                                                else RunQuitException())
+                                        }
+                                    }
+                                }
+                                key.key == "l" && !key.ctrl && !key.alt -> page.update {
+                                    if (it == RunConsolePage.Logs) RunConsolePage.Dashboard else RunConsolePage.Logs
+                                }
+                                key.key == "i" && !key.ctrl && !key.alt -> page.update {
+                                    if (it == RunConsolePage.Info) RunConsolePage.Dashboard else RunConsolePage.Info
+                                }
+                                page.value == RunConsolePage.Info && !key.ctrl && !key.alt -> when (key.key) {
+                                    "ArrowDown" -> info.scrollBy(1)
+                                    "ArrowUp" -> info.scrollBy(-1)
+                                    "PageDown" -> info.scrollBy((output.size.height - 4).coerceAtLeast(1))
+                                    "PageUp" -> info.scrollBy(-(output.size.height - 4).coerceAtLeast(1))
+                                    "Home" -> info.home()
+                                    "End" -> info.end()
+                                }
                             }
                         }
                     }
@@ -124,7 +156,7 @@ class RunConsole(
                     while (isActive) {
                         delay(250.milliseconds)
                         output.updateSize()
-                        animation.update(frame(RunDashboardStatus.Running))
+                        paint(RunDashboardStatus.Running)
                     }
                 }
             }
@@ -159,11 +191,12 @@ class RunConsole(
                             RunDashboardStatus.Failed -> TextColors.red
                             RunDashboardStatus.Cancelled -> TextColors.green
                             RunDashboardStatus.Running -> TextColors.blue
+                            RunDashboardStatus.Quitting -> TextColors.blue
                         },
                     ))
                 }
                 cleanup {
-                    if (animation != null) animation.update(frame(status)) else output.println(frame(status))
+                    if (animation != null) paint(status) else output.println(frame(status))
                 }
                 cleanup { animation?.stop() }
                 if (live) cleanup { output.cursor.show() }

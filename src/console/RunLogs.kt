@@ -23,7 +23,8 @@ internal class RunLogs {
         if (entries.size > 1_000) entries.removeFirst()
     }
 
-    fun render(width: Int, height: Int, controlsEnabled: Boolean): Widget {
+    fun render(width: Int, height: Int, controlsEnabled: Boolean,
+        status: RunDashboardStatus = RunDashboardStatus.Running): Widget {
         val columns = width.coerceAtLeast(1)
         val rows = (height - 1).coerceAtLeast(1)
         val snapshot = synchronized(this) { entries.toList() }
@@ -42,10 +43,11 @@ internal class RunLogs {
             if (headerRows > 0) cell(Viewport(Text(bold("logs")), width = columns, height = 1))
             if (headerRows > 1) cell(HorizontalRule(ruleStyle = gray))
             if (messageRows > 0) cell(Viewport(messages, width = columns, height = messageRows))
-            cell(Viewport(Text(if (controlsEnabled) logControl("dashboard") else ""), width = columns, height = 1))
+            cell(Viewport(Text(when {
+                status == RunDashboardStatus.Quitting -> gray("Quitting… waiting for cleanup")
+                controlsEnabled -> runControls(RunConsolePage.Logs)
+                else -> ""
+            }), width = columns, height = 1))
         }, width = columns, height = rows)
     }
 }
-
-internal fun logControl(destination: String): String =
-    bold("l") + gray(" $destination · ") + bold("q") + gray(" quit")

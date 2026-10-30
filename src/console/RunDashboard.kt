@@ -42,10 +42,15 @@ class RunDashboard(private val context: RunDashboardContext) {
             cell(Viewport(Text(title), width = (contentWidth - timer.length - 1).coerceAtLeast(1), height = 1))
             cell(gray(timer))
         }
-        val dataset = gray(singleLine(context.datasetName)) + "  " +
+        val pathLabelWidth = maxOf(context.datasetName.length, "output".length)
+        val dataset = gray(singleLine(context.datasetName).padEnd(pathLabelWidth)) + "  " +
             (green + underline + hyperlink(context.datasetPath.toUri().toASCIIString()))(
                 singleLine(context.datasetPath.toString()),
             )
+        val output = context.outputPath?.toAbsolutePath()?.normalize()?.let { path ->
+            gray("output".padEnd(pathLabelWidth)) + "  " +
+                (green + underline + hyperlink(path.toUri().toASCIIString()))(singleLine(path.toString()))
+        }
         val samples = if (context.samplesPerTask > 1)
             " · ${state.completedSamples}/${context.totalSamples} samples" else ""
         val progressLabel = "$completed/${context.totalTasks} tasks$samples"
@@ -106,12 +111,14 @@ class RunDashboard(private val context: RunDashboardContext) {
             else -> listOf(progress)
         }
         val showDataset = availableHeight >= summary.size + 4
+        val showOutput = output != null && showDataset && availableHeight >= summary.size + 5
         val spacious = availableHeight >= 14
         val fixedRows = (if (availableHeight > 1) 1 else 0) + summary.size + 1 +
-            (if (showDataset) 1 else 0) + (if (spacious) 3 else 0)
+            (if (showDataset) 1 else 0) + (if (showOutput) 1 else 0) + (if (spacious) 3 else 0)
         val activeBudget = (availableHeight - fixedRows).coerceAtLeast(0)
         val commonPhase = active.map { it.value }.distinct().singleOrNull()
         val runLabel = when (status) {
+            RunDashboardStatus.Quitting -> "QUITTING"
             RunDashboardStatus.Complete -> "COMPLETE"
             RunDashboardStatus.Failed -> "FAILED"
             RunDashboardStatus.Cancelled -> "CANCELLED"
@@ -124,6 +131,7 @@ class RunDashboard(private val context: RunDashboardContext) {
             }
         }
         val runColour = when (status) {
+            RunDashboardStatus.Quitting -> yellow
             RunDashboardStatus.Failed -> red
             RunDashboardStatus.Cancelled -> yellow
             RunDashboardStatus.Complete -> green
@@ -140,6 +148,7 @@ class RunDashboard(private val context: RunDashboardContext) {
             if (availableHeight > 1) cell(header)
             if (spacious) cell("")
             if (showDataset) cell(line("  $dataset"))
+            if (showOutput) cell(line("  $output"))
             if (spacious) cell("")
             summary.forEach { cell(it) }
             if (spacious) cell("")
@@ -166,11 +175,12 @@ class RunDashboard(private val context: RunDashboardContext) {
                         RunPhase.ResolvingModel -> "Resolving model limits"
                         RunPhase.Running -> if (state.completedSamples.toLong() == context.totalSamples)
                             "Finalising run" else "Waiting for tasks"
-                    } else "$completed/${context.totalTasks} tasks · ${state.completedSamples}/${context.totalSamples} samples saved"
+                    } else if (status == RunDashboardStatus.Quitting) "Stopping active tasks and finalising run metadata"
+                    else "$completed/${context.totalTasks} tasks · ${state.completedSamples}/${context.totalSamples} samples saved"
                     cell(line(badge + "  " + gray(detail)))
                 }
             }
-            cell(line(if (controlsEnabled) logControl("logs") else ""))
+            cell(line(if (controlsEnabled) runControls(RunConsolePage.Dashboard) else ""))
         }
         return Viewport(body, width = contentWidth)
     }

@@ -34,6 +34,9 @@ import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.TestTimeSource
 import kotlin.time.TimeMark
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.async
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
@@ -291,9 +294,97 @@ class RunConsoleTest {
     }
 
     @Test
-    fun quitFromEitherPageStopsActiveWorkAndPreservesSavedResults() = runBlocking {
-        for (logsPage in listOf(false, true)) {
-            val root = Files.createDirectory(temporaryDirectory.resolve(if (logsPage) "logs" else "dashboard"))
+    fun quitAndCtrlCShowQuittingOnEveryPageUntilCleanupFinishes() = runBlocking {
+        for (page in RunConsolePage.entries) for (key in listOf(KeyboardEvent("q"), KeyboardEvent("c", ctrl = true))) {
+            val recorder = TerminalRecorder(width = 120)
+            val input = KeyboardTerminal(recorder)
+            val clock = TestTimeSource()
+            val started = CompletableDeferred<Unit>()
+            val cleaningUp = CompletableDeferred<Unit>()
+            val finishCleanup = CompletableDeferred<Unit>()
+            fun screen() = TerminalScreen(120, 24).also { it.write(recorder.output()) }.lines.joinToString("\n")
+            suspend fun waitFor(text: String) = withTimeout(3.seconds) {
+                while (!screen().contains(text)) delay(10.milliseconds)
+            }
+            val running = async {
+                runCatching {
+                    RunConsole(Terminal(terminalInterface = input), context, clock.markNow()).run {
+                        started.complete(Unit)
+                        try { awaitCancellation() } finally {
+                            withContext(NonCancellable) {
+                                cleaningUp.complete(Unit)
+                                finishCleanup.await()
+                            }
+                        }
+                    }
+                }
+            }
+            try {
+                started.await()
+                when (page) {
+                    RunConsolePage.Dashboard -> Unit
+                    RunConsolePage.Logs -> { input.keys.put(KeyboardEvent("l")); waitFor("l dashboard") }
+                    RunConsolePage.Info -> { input.keys.put(KeyboardEvent("i")); waitFor("i dashboard") }
+                }
+                input.keys.put(key)
+                withTimeout(3.seconds) { cleaningUp.await() }
+                assertContains(screen(), "QUITTING")
+                assertFalse(screen().contains("CANCELLED"))
+                assertFalse(screen().contains("q quit"))
+                // A later periodic refresh must retain QUITTING while cleanup is still blocked.
+                clock += 1.seconds
+                if (page == RunConsolePage.Dashboard) waitFor("00:00:01") else delay(300.milliseconds)
+                assertContains(screen(), "QUITTING")
+                finishCleanup.complete(Unit)
+                val result = withTimeout(3.seconds) { running.await() }
+                assertTrue(result.exceptionOrNull() is CancellationException)
+                assertContains(screen(), "CANCELLED")
+                assertFalse(screen().contains("Quitting… waiting for cleanup"))
+                if (page != RunConsolePage.Logs) assertFalse(screen().contains("QUITTING"))
+                assertFalse(input.rawMode.get())
+                assertTrue(recorder.output().endsWith("\u001b[?25h"))
+            } finally {
+                finishCleanup.complete(Unit)
+                running.cancelAndJoin()
+            }
+        }
+    }
+
+    @Test
+    fun infoShortcutNavigatesAndScrollsWhileExecutionContinues() = runBlocking {
+        val recorder = TerminalRecorder(width = 120, height = 10)
+        val input = KeyboardTerminal(recorder)
+        val task = context.taskSubmissions.keys.single()
+        fun screen() = TerminalScreen(120, 10).also { it.write(recorder.output()) }
+        suspend fun waitFor(text: String) = withTimeout(3.seconds) {
+            while (!screen().lines.joinToString("\n").contains(text)) delay(10.milliseconds)
+        }
+        RunConsole(Terminal(terminalInterface = input), context).run { onEvent ->
+            input.keys.put(KeyboardEvent("i"))
+            waitFor("i dashboard")
+            assertEquals("info", screen().lines.first().trim())
+            input.keys.put(KeyboardEvent("End"))
+            waitFor(task.value)
+            input.keys.put(KeyboardEvent("Home"))
+            waitFor("proofs-01")
+            onEvent(RunEvent.SampleFinished(task, 1, EvaluationResult.Accepted))
+            input.keys.put(KeyboardEvent("l"))
+            waitFor("l dashboard")
+            waitFor("Finished $task")
+            input.keys.put(KeyboardEvent("i"))
+            waitFor("i dashboard")
+            input.keys.put(KeyboardEvent("i"))
+            waitFor("l logs")
+            waitFor("1 success")
+        }
+        assertTrue(screen().history.none { it.contains("astrid") || it.trim() == "info" || it.trim() == "logs" })
+        assertFalse(input.rawMode.get())
+    }
+
+    @Test
+    fun quitFromEveryPageStopsActiveWorkAndPreservesSavedResults() = runBlocking {
+        for (page in RunConsolePage.entries) {
+            val root = Files.createDirectory(temporaryDirectory.resolve(page.name))
             val task = createRunTask(root)
             val runDirectory = root.resolve("run")
             val sampleDirectory = runDirectory.resolve("tasks/${task.manifest.taskId}/samples/001")
@@ -308,7 +399,8 @@ class RunConsoleTest {
                 ) else {
                     savedRecord = Files.readString(sampleDirectory.resolve("record.json"))
                     savedTrajectory = Files.readString(sampleDirectory.resolve("trajectory.json"))
-                    if (logsPage) input.keys.put(KeyboardEvent("l"))
+                    if (page == RunConsolePage.Logs) input.keys.put(KeyboardEvent("l"))
+                    if (page == RunConsolePage.Info) input.keys.put(KeyboardEvent("i"))
                     input.keys.put(KeyboardEvent("q"))
                     try { awaitCancellation() } finally { stopped.set(true) }
                 }
@@ -341,7 +433,11 @@ class RunConsoleTest {
             assertFalse(input.rawMode.get())
             val screen = TerminalScreen(120, 24).also { it.write(recorder.output()) }.lines.joinToString("\n")
             assertContains(screen, "CANCELLED")
-            assertContains(screen, if (logsPage) "1 samples saved" else "1 success")
+            when (page) {
+                RunConsolePage.Logs -> assertContains(screen, "1 samples saved")
+                RunConsolePage.Dashboard -> assertContains(screen, "1 success")
+                RunConsolePage.Info -> assertContains(screen, "info")
+            }
             assertFalse(screen.contains("COMPLETE"))
             assertTrue(recorder.output().endsWith("\u001b[?25h"))
         }

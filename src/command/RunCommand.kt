@@ -16,6 +16,7 @@ import console.RunConsole
 import console.RunConsoleMode
 import console.RunQuitException
 import console.RunDashboardContext
+import console.RunTaskProblem
 import dataset.FileTaskRepository
 import dataset.JsonTaskManifestReader
 import dataset.TaskPackageVerifier
@@ -76,7 +77,8 @@ class RunCommand(
 
     override suspend fun run() {
         val startedAt = TimeSource.Monotonic.markNow()
-        val specification = configReader.read(configPath).toSpecification()
+        val runConfig = configReader.read(configPath)
+        val specification = runConfig.toSpecification()
         val repository = FileTaskRepository(
             datasetRoot,
             JsonTaskManifestReader(),
@@ -120,6 +122,13 @@ class RunCommand(
             datasetRoot = datasetRoot,
             taskSubmissions = selected.associate { it.manifest.taskId to it.manifest.submission.kind },
             samplesPerTask = specification.samplesPerTask,
+            configPath = configPath,
+            outputPath = runDirectory,
+            runConfig = runConfig,
+            backendId = backendId,
+            taskProblems = selected.associate { it.manifest.taskId to RunTaskProblem(
+                it.manifest.paperId.value, it.manifest.sourceResultId.value,
+            ) },
         ), startedAt, uiMode)
         try {
             console.run { onEvent ->

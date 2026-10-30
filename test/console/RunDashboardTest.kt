@@ -26,6 +26,7 @@ class RunDashboardTest {
     private val context = RunDashboardContext(
         "proofs-01", "test-model", Path.of("/datasets/pl-suite"),
         mapOf(proof to SubmissionKind("lean_proof_body"), statement to SubmissionKind("lean_statement")), 2,
+        outputPath = Path.of("/runs/proofs-01"),
     )
 
     private fun terminal(width: Int, colour: Boolean = false) = Terminal(
@@ -47,6 +48,9 @@ class RunDashboardTest {
         assertTrue(lines.last().isBlank())
         assertContains(lines[2], "pl-suite")
         assertContains(lines[2], "/datasets/pl-suite")
+        assertContains(lines[3], "output")
+        assertContains(lines[3], "/runs/proofs-01")
+        assertEquals(lines[2].indexOf("/datasets"), lines[3].indexOf("/runs"))
         assertContains(output, "PREPARING")
         assertFalse(output.contains("quit"))
     }
@@ -129,6 +133,7 @@ class RunDashboardTest {
         val state = RunDashboardState().reduce(RunEvent.PhaseChanged(proof, 1, SamplePhase.Repairing))
         val output = terminal(160, colour = true).render(RunDashboard(untrusted).render(state, 5.seconds, 160))
         assertContains(output, "file:///datasets/pl-suite")
+        assertContains(output, "file:///runs/proofs-01")
         assertContains(output, "REPAIRING")
         assertFalse(output.contains("\u001b[2J"))
         assertContains(output, "\u001b[")
