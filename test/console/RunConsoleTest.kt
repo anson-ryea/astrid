@@ -5,14 +5,23 @@ import com.github.ajalt.mordant.terminal.Terminal
 import com.github.ajalt.mordant.terminal.TerminalRecorder
 import com.github.ajalt.mordant.terminal.TerminalInterface
 import com.github.ajalt.mordant.terminal.PrintRequest
+import com.github.ajalt.mordant.input.InputEvent
+import com.github.ajalt.mordant.input.KeyboardEvent
+import com.github.ajalt.mordant.input.MouseTracking
+import com.github.ajalt.mordant.terminal.TimeoutException
 import domain.EvaluationResult
 import domain.SubmissionKind
 import domain.TaskId
+import domain.BenchmarkTask
+import domain.EvaluationKind
+import dataset.TaskRepository
 import java.nio.file.Path
 import java.nio.file.Files
 import java.io.File
 import java.net.URLClassLoader
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.test.Test
 import kotlin.test.assertContains
@@ -23,6 +32,7 @@ import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.TestTimeSource
+import kotlin.time.TimeMark
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
@@ -36,6 +46,16 @@ import run.SamplePhase
 import run.RunPhase
 import support.TerminalScreen
 import org.junit.jupiter.api.io.TempDir
+import run.BenchmarkRunner
+import run.FileRunStore
+import run.TaskSelector
+import run.ScriptedPromptExecutor
+import run.createRunTask
+import run.createRunEngine
+import run.runTestSpecification
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 class RunConsoleTest {
     @TempDir
@@ -90,9 +110,9 @@ class RunConsoleTest {
                 while (!recorder.output().contains("00:00:02")) delay(10.milliseconds)
             }
             assertContains(recorder.output(), "GENERATING")
-            assertContains(recorder.output(), "◐")
+            assertContains(recorder.output(), "◢")
             // The task state stays unchanged while Mordant redraws successive spinner frames.
-            for (frame in listOf("◓", "◑", "◒")) {
+            for (frame in listOf("◣", "◤", "◥")) {
                 clock += 250.milliseconds
                 withTimeout(3.seconds) {
                     while (!recorder.output().contains(frame)) delay(10.milliseconds)
@@ -218,6 +238,130 @@ class RunConsoleTest {
     }
 
     @Test
+    fun logShortcutTogglesPagesAndKeepsFollowingMilestonesWithoutScrollingOldHeaders() = runBlocking {
+        val recorder = TerminalRecorder(width = 120, height = 10)
+        val input = KeyboardTerminal(recorder)
+        val task = context.taskSubmissions.keys.single()
+        fun screen() = TerminalScreen(120, 10).also { it.write(recorder.output()) }
+        suspend fun waitFor(text: String) = withTimeout(3.seconds) {
+            while (!screen().lines.joinToString("\n").contains(text)) delay(10.milliseconds)
+        }
+        RunConsole(Terminal(terminalInterface = input), context).run { onEvent ->
+            assertTrue(input.rawMode.get())
+            onEvent(RunEvent.RunPhaseChanged(RunPhase.Preparing))
+            onEvent(RunEvent.SampleStarted(task, 1))
+            input.keys.put(KeyboardEvent("l"))
+            waitFor("l dashboard")
+            val logs = screen().lines.joinToString("\n")
+            assertContains(logs, "Preparing tasks")
+            assertContains(logs, "Started $task · sample 1")
+            assertTrue(Regex("\\d{2}:\\d{2}:\\d{2} {2}◇ Started").containsMatchIn(logs))
+            assertEquals("logs", screen().lines.first().trim())
+            assertFalse(logs.contains("astrid"))
+            input.keys.put(KeyboardEvent("l"))
+            waitFor("l logs")
+            onEvent(RunEvent.SampleFinished(task, 1, EvaluationResult.Accepted))
+            waitFor("1 success")
+            input.keys.put(KeyboardEvent("l"))
+            waitFor("l dashboard")
+            waitFor("Finished $task · sample 1: success")
+            val logsAgain = screen().lines.joinToString("\n")
+            assertTrue(logsAgain.indexOf("Started") < logsAgain.indexOf("Finished"))
+            assertEquals(1, Regex("Started $task").findAll(logsAgain).count())
+        }
+        assertFalse(input.rawMode.get())
+        assertContains(screen().lines.joinToString("\n"), "COMPLETE: 1 samples saved")
+        assertTrue(screen().history.none { it.contains("astrid") || it.trim() == "logs" })
+        assertTrue(recorder.output().endsWith("\u001b[?25h"))
+    }
+
+    @Test
+    fun ctrlCInRawModeCancelsTheRunAndRestoresInput() = runBlocking {
+        val recorder = TerminalRecorder(width = 120)
+        val input = KeyboardTerminal(recorder)
+        assertFailsWith<CancellationException> {
+            RunConsole(Terminal(terminalInterface = input), context).run {
+                input.keys.put(KeyboardEvent("c", ctrl = true))
+                awaitCancellation()
+            }
+        }
+        assertFalse(input.rawMode.get())
+        assertContains(recorder.output(), "CANCELLED")
+        assertTrue(recorder.output().endsWith("\u001b[?25h"))
+    }
+
+    @Test
+    fun quitFromEitherPageStopsActiveWorkAndPreservesSavedResults() = runBlocking {
+        for (logsPage in listOf(false, true)) {
+            val root = Files.createDirectory(temporaryDirectory.resolve(if (logsPage) "logs" else "dashboard"))
+            val task = createRunTask(root)
+            val runDirectory = root.resolve("run")
+            val sampleDirectory = runDirectory.resolve("tasks/${task.manifest.taskId}/samples/001")
+            val recorder = TerminalRecorder(width = 120)
+            val input = KeyboardTerminal(recorder)
+            val stopped = AtomicBoolean(false)
+            var savedRecord = ""
+            var savedTrajectory = ""
+            val executor = ScriptedPromptExecutor(listOf("proof", "wait", "unused")) { reply ->
+                if (reply == "proof") ai.koog.prompt.message.Message.Assistant(
+                    reply, ai.koog.prompt.message.ResponseMetaInfo.Empty,
+                ) else {
+                    savedRecord = Files.readString(sampleDirectory.resolve("record.json"))
+                    savedTrajectory = Files.readString(sampleDirectory.resolve("trajectory.json"))
+                    if (logsPage) input.keys.put(KeyboardEvent("l"))
+                    input.keys.put(KeyboardEvent("q"))
+                    try { awaitCancellation() } finally { stopped.set(true) }
+                }
+            }
+            val repository = object : TaskRepository {
+                override fun findAll() = listOf(task)
+                override fun findById(taskId: TaskId): BenchmarkTask? = task.takeIf { it.manifest.taskId == taskId }
+            }
+            val metadata = context.copy(
+                taskSubmissions = mapOf(task.manifest.taskId to task.manifest.submission.kind), samplesPerTask = 3,
+            )
+            val engine = createRunEngine(root, executor, runTestSpecification(samplesPerTask = 3, maxConcurrentTasks = 1))
+            withTimeout(10.seconds) {
+                assertFailsWith<RunQuitException> {
+                    RunConsole(Terminal(terminalInterface = input), metadata).run { onEvent ->
+                        BenchmarkRunner(repository, TaskSelector(setOf(EvaluationKind("test_evaluation"))),
+                            engine, FileRunStore(runDirectory), onEvent = onEvent).run()
+                    }
+                }
+            }
+            assertTrue(stopped.get())
+            assertEquals(2, executor.prompts.size)
+            assertEquals(savedRecord, Files.readString(sampleDirectory.resolve("record.json")))
+            assertEquals(savedTrajectory, Files.readString(sampleDirectory.resolve("trajectory.json")))
+            assertFalse(Files.exists(sampleDirectory.resolveSibling("002/record.json")))
+            assertFalse(Files.exists(sampleDirectory.resolveSibling("003/record.json")))
+            val manifest = Json.parseToJsonElement(Files.readString(runDirectory.resolve("run.json"))).jsonObject
+            assertEquals("failed", manifest.getValue("status").jsonPrimitive.content)
+            assertContains(manifest.getValue("failure_reason").jsonPrimitive.content, "stopped by user")
+            assertFalse(input.rawMode.get())
+            val screen = TerminalScreen(120, 24).also { it.write(recorder.output()) }.lines.joinToString("\n")
+            assertContains(screen, "CANCELLED")
+            assertContains(screen, if (logsPage) "1 samples saved" else "1 success")
+            assertFalse(screen.contains("COMPLETE"))
+            assertTrue(recorder.output().endsWith("\u001b[?25h"))
+        }
+    }
+
+    @Test
+    fun missingRawInputSupportKeepsTheDashboardWithoutAdvertisingTheShortcut() = runBlocking {
+        val recorder = TerminalRecorder(width = 120)
+        val input = object : TerminalInterface by recorder {
+            override fun enterRawMode(mouseTracking: MouseTracking): AutoCloseable =
+                throw UnsupportedOperationException("no keyboard")
+        }
+        RunConsole(Terminal(terminalInterface = input), context).run {
+            assertContains(recorder.output(), "PREPARING")
+            assertFalse(recorder.output().contains(" logs"))
+        }
+        assertContains(recorder.output(), "COMPLETE")
+    }
+
+    @Test
     fun scopeCancellationStopsAnimationAndRestoresTheCursor() = runBlocking {
         val recorder = TerminalRecorder(width = 120)
         val terminal = Terminal(terminalInterface = recorder)
@@ -255,5 +399,19 @@ class RunConsoleTest {
         // Stack recovery can copy a coroutine exception, retaining the original as its cause.
         assertTrue(generateSequence(failure as Throwable) { it.cause }
             .flatMap { it.suppressed.asSequence() }.any { it.message == "terminal unavailable" })
+    }
+
+    private class KeyboardTerminal(recorder: TerminalRecorder) : TerminalInterface by recorder {
+        val keys = LinkedBlockingQueue<InputEvent>()
+        val rawMode = AtomicBoolean(false)
+
+        override fun enterRawMode(mouseTracking: MouseTracking): AutoCloseable {
+            rawMode.set(true)
+            return AutoCloseable { rawMode.set(false) }
+        }
+
+        override fun readInputEvent(timeout: TimeMark, mouseTracking: MouseTracking): InputEvent =
+            keys.poll(timeout.elapsedNow().unaryMinus().inWholeMilliseconds.coerceAtLeast(0), TimeUnit.MILLISECONDS)
+                ?: throw TimeoutException()
     }
 }

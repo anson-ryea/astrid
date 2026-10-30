@@ -16,6 +16,11 @@ import dataset.FileTaskRepository
 import dataset.JsonTaskManifestReader
 import domain.EvaluationResult
 import domain.PaperId
+import console.RunLogEntry
+import console.renderMessage
+import com.github.ajalt.mordant.rendering.TextColors.green
+import com.github.ajalt.mordant.rendering.TextColors.red
+import com.github.ajalt.mordant.rendering.TextColors.yellow
 import java.nio.file.Path
 import kotlin.io.path.Path
 
@@ -48,15 +53,21 @@ class ValidateLeanCommand(projectRoot: Path = Path("")) : SuspendingCliktCommand
                 harnessPath = projectRoot.resolve("src/backend/lean/evaluation/SemanticHarness.lean")))
         val results = LeanPackageValidator(factory, LeanValidationProfileReader(validationRoot, referenceRoot)).validateAll(tasks) {
             val result = it.report.result
-            echo(when (result) {
+            val message = when (result) {
                 EvaluationResult.Accepted -> "PASS ${it.taskId}: hashes, closure, isolated boundary and reference evaluation"
                 is EvaluationResult.Rejected -> "FAIL ${it.taskId}: reference rejected: ${result.reason}"
                 is EvaluationResult.NeedsReview -> "FAIL ${it.taskId}: reference needs review: ${result.reason}"
                 is EvaluationResult.InfrastructureFailure -> "FAIL ${it.taskId}: ${result.reason}"
-            })
+            }
+            echo(RunLogEntry(message, when (result) {
+                EvaluationResult.Accepted -> green
+                is EvaluationResult.NeedsReview -> yellow
+                else -> red
+            }).renderMessage())
         }
         val passed = results.count { it.report.result == EvaluationResult.Accepted }
-        echo("Validated $passed/${results.size} Lean packages; task review status unchanged")
+        echo(RunLogEntry("Validated $passed/${results.size} Lean packages; task review status unchanged",
+            if (passed == results.size) green else red).renderMessage())
         if (passed != results.size) throw ProgramResult(1)
     }
 }

@@ -41,9 +41,9 @@ class RunDashboardTest {
             RunDashboardState(), 1.hours + 2.minutes + 3.seconds, 160,
         ))
         val lines = output.lines()
-        assertContains(lines.first(), "astrid  proofs-01", ignoreCase = true)
+        assertTrue(lines.first().startsWith("astrid  proofs-01", ignoreCase = true))
         assertTrue(lines.first().trimEnd().endsWith("01:02:03"))
-        assertEquals(158, lines.first().trimEnd().length)
+        assertEquals(160, lines.first().trimEnd().length)
         assertTrue(lines.last().isBlank())
         assertContains(lines[2], "pl-suite")
         assertContains(lines[2], "/datasets/pl-suite")

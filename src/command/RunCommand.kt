@@ -11,8 +11,10 @@ import com.github.ajalt.clikt.parameters.options.default
 import com.github.ajalt.clikt.parameters.options.option
 import com.github.ajalt.clikt.parameters.types.path
 import com.github.ajalt.clikt.parameters.types.choice
+import com.github.ajalt.mordant.rendering.TextColors.green
 import console.RunConsole
 import console.RunConsoleMode
+import console.RunQuitException
 import console.RunDashboardContext
 import dataset.FileTaskRepository
 import dataset.JsonTaskManifestReader
@@ -119,47 +121,56 @@ class RunCommand(
             taskSubmissions = selected.associate { it.manifest.taskId to it.manifest.submission.kind },
             samplesPerTask = specification.samplesPerTask,
         ), startedAt, uiMode)
-        console.run { onEvent ->
-            onEvent(RunEvent.RunPhaseChanged(RunPhase.Preparing))
-            // Preflight can compile Lean or perform blocking filesystem/process I/O.
-            withContext(Dispatchers.IO) {
-                systemPromptRenderer.render(emptyMap())
-                repairPromptRenderer.render(mapOf("DIAGNOSTIC" to "preflight"))
-                selected.forEach { task ->
-                    verifier.verify(task)
-                    backend.preflight(task)
-                    workspaceFactory?.prepare(task)
+        try {
+            console.run { onEvent ->
+                onEvent(RunEvent.RunPhaseChanged(RunPhase.Preparing))
+                // Preflight can compile Lean or perform blocking filesystem/process I/O.
+                withContext(Dispatchers.IO) {
+                    systemPromptRenderer.render(emptyMap())
+                    repairPromptRenderer.render(mapOf("DIAGNOSTIC" to "preflight"))
+                    selected.forEach { task ->
+                        verifier.verify(task)
+                        backend.preflight(task)
+                        workspaceFactory?.prepare(task)
+                    }
+                }
+                val apiKey = apiKeyProvider()?.takeIf(String::isNotBlank)
+                    ?: error("OPENROUTER_API_KEY is missing")
+                onEvent(RunEvent.RunPhaseChanged(RunPhase.ResolvingModel))
+                OpenRouterConnection(apiKey).use { connection ->
+                    val resolvedSpecification = specification.copy(model = connection.resolveModel(specification.model))
+                    withContext(Dispatchers.IO) { Files.createDirectories(runsDirectory) }
+                    val engine = TaskRunEngine(
+                        protocols = protocols,
+                        evaluators = backend.evaluators,
+                        promptExecutor = connection.promptExecutor,
+                        specification = resolvedSpecification,
+                        systemPromptRenderer = systemPromptRenderer,
+                        repairPromptRenderer = repairPromptRenderer,
+                        packageVerifier = verifier,
+                        workspaceFactory = workspaceFactory,
+                    )
+                    onEvent(RunEvent.RunPhaseChanged(RunPhase.Running))
+                    BenchmarkRunner(
+                        repository = repository,
+                        selector = selector,
+                        engine = engine,
+                        store = FileRunStore(runDirectory),
+                        packageVerifier = verifier,
+                        onEvent = onEvent,
+                    ).run()
                 }
             }
-            val apiKey = apiKeyProvider()?.takeIf(String::isNotBlank)
-                ?: error("OPENROUTER_API_KEY is missing")
-            onEvent(RunEvent.RunPhaseChanged(RunPhase.ResolvingModel))
-            OpenRouterConnection(apiKey).use { connection ->
-                val resolvedSpecification = specification.copy(model = connection.resolveModel(specification.model))
-                withContext(Dispatchers.IO) { Files.createDirectories(runsDirectory) }
-                val engine = TaskRunEngine(
-                    protocols = protocols,
-                    evaluators = backend.evaluators,
-                    promptExecutor = connection.promptExecutor,
-                    specification = resolvedSpecification,
-                    systemPromptRenderer = systemPromptRenderer,
-                    repairPromptRenderer = repairPromptRenderer,
-                    packageVerifier = verifier,
-                    workspaceFactory = workspaceFactory,
-                )
-                onEvent(RunEvent.RunPhaseChanged(RunPhase.Running))
-                BenchmarkRunner(
-                    repository = repository,
-                    selector = selector,
-                    engine = engine,
-                    store = FileRunStore(runDirectory),
-                    packageVerifier = verifier,
-                    onEvent = onEvent,
-                ).run()
-            }
+        } catch (stopped: RunQuitException) {
+            // Persistence or terminal cleanup failures must still be reported.
+            stopped.suppressed.firstOrNull()?.let { throw it }
+            console.printMessage(if (Files.isDirectory(runDirectory))
+                "Benchmark stopped. Partial results kept: $runDirectory"
+            else "Benchmark stopped before the run folder was created.", green)
+            return
         }
 
-        echo("Benchmark run complete: $runDirectory")
+        console.printMessage("Benchmark run complete: $runDirectory", green)
     }
 
     private companion object {

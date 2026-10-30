@@ -26,10 +26,9 @@ class RunDashboard(private val context: RunDashboardContext) {
         width: Int,
         height: Int = 24,
         status: RunDashboardStatus = RunDashboardStatus.Running,
+        controlsEnabled: Boolean = false,
     ): Widget {
-        val columns = width.coerceAtLeast(1)
-        val inset = if (columns >= 60) 2 else 0
-        val contentWidth = (columns - inset * 2).coerceAtLeast(1)
+        val contentWidth = width.coerceAtLeast(1)
         val completed = context.completedTasks(state)
         val timer = formatElapsed(elapsed)
         val spinnerTick = (elapsed.inWholeMilliseconds.coerceAtLeast(0) / 250 % 4).toInt()
@@ -171,16 +170,9 @@ class RunDashboard(private val context: RunDashboardContext) {
                     cell(line(badge + "  " + gray(detail)))
                 }
             }
-            // Reserved for keyboard controls; do not advertise shortcuts before they work.
-            cell(" ".repeat(contentWidth))
+            cell(line(if (controlsEnabled) logControl("logs") else ""))
         }
-        return Viewport(body, width = contentWidth).let { content ->
-            horizontalLayout {
-                spacing = 0
-                if (inset > 0) cell(" ".repeat(inset))
-                cell(content)
-            }
-        }
+        return Viewport(body, width = contentWidth)
     }
 
     private fun phaseLabel(phase: SamplePhase): String = when (phase) {
