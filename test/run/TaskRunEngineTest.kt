@@ -11,8 +11,12 @@ import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.launch
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -104,6 +108,7 @@ class TaskRunEngineTest {
 
     @Test
     fun recordsTruncatedReasoningOnlyReplyWithoutEvaluatingOrRepairing() = runBlocking {
+        val events = mutableListOf<RunEvent>()
         val task = createRunTask(temporaryDirectory)
         val executor = ScriptedPromptExecutor(listOf("ignored")) {
             Message.Assistant(
@@ -119,7 +124,7 @@ class TaskRunEngineTest {
             assessSubmission = { _, _ -> error("A truncated reply must not be evaluated") },
         )
 
-        val record = engine.run(task, sampleIndex = 1)
+        val record = engine.run(task, sampleIndex = 1, onEvent = { events += it })
 
         val failure = assertIs<EvaluationResult.InfrastructureFailure>(record.finalResult)
         assertContains(failure.reason, "output-token limit")
@@ -135,11 +140,14 @@ class TaskRunEngineTest {
             response["metaInfo"]!!.jsonObject["outputTokensCount"]!!.jsonPrimitive.content.toInt(),
         )
         assertTrue(response["parts"]!!.jsonArray.toString().contains("reasoning-only reply"))
+        assertEquals(listOf(SamplePhase.Preparing, SamplePhase.Generating),
+            events.filterIsInstance<RunEvent.PhaseChanged>().map { it.phase })
     }
 
     @Test
     fun repairsARejectedSubmissionWithinTheSameSample() {
         runBlocking {
+            val events = mutableListOf<RunEvent>()
             val task = createRunTask(temporaryDirectory)
             val executor = ScriptedPromptExecutor(listOf("bad", "good"))
             val engine = createRunEngine(
@@ -154,13 +162,17 @@ class TaskRunEngineTest {
                 },
             )
 
-            val record = engine.run(task, sampleIndex = 1)
+            val record = engine.run(task, sampleIndex = 1, onEvent = { events += it })
 
             assertEquals(EvaluationResult.Accepted, record.finalResult)
             assertEquals(listOf(0, 1), record.turns.map { it.repairTurn })
             assertEquals(listOf("bad", "good"), record.turns.map { it.submission })
             assertEquals("Repair: Lean rejected the proof", record.turns[1].userMessage)
             assertEquals(2, executor.prompts.size)
+            assertEquals<List<RunEvent>>(listOf(
+                SamplePhase.Preparing, SamplePhase.Generating, SamplePhase.Evaluating,
+                SamplePhase.Repairing, SamplePhase.Generating, SamplePhase.Evaluating,
+            ).map { RunEvent.PhaseChanged(task.manifest.taskId, 1, it) }, events)
             assertEquals(
                 listOf(
                     "LLMCallStartingEvent", "LLMCallCompletedEvent",
@@ -253,5 +265,56 @@ class TaskRunEngineTest {
             }
             assertTrue(executor.prompts.isEmpty())
         }
+    }
+
+    @Test
+    fun phaseCallbacksCanSuspendAndPrecedeTheReportedWork() = runBlocking {
+        val task = createRunTask(temporaryDirectory)
+        val events = mutableListOf<RunEvent>()
+        val delivered = Channel<RunEvent>()
+        val acknowledged = Channel<Unit>()
+        val consumer = launch {
+            for (event in delivered) {
+                events += event
+                acknowledged.send(Unit)
+            }
+        }
+        val executor = ScriptedPromptExecutor(listOf("proof")) {
+            assertEquals(SamplePhase.Generating, (events.last() as RunEvent.PhaseChanged).phase)
+            Message.Assistant(it, ResponseMetaInfo.Empty)
+        }
+        val engine = createRunEngine(temporaryDirectory, executor, assessSubmission = { _, _ ->
+            assertEquals(SamplePhase.Evaluating, (events.last() as RunEvent.PhaseChanged).phase)
+            EvaluationResult.Accepted
+        })
+        try {
+            engine.run(task, 2, onEvent = {
+                delivered.send(it)
+                acknowledged.receive()
+            })
+        } finally {
+            delivered.close()
+            consumer.join()
+        }
+        assertEquals<List<RunEvent>>(listOf(SamplePhase.Preparing, SamplePhase.Generating, SamplePhase.Evaluating)
+            .map { RunEvent.PhaseChanged(task.manifest.taskId, 2, it) }, events)
+    }
+
+    @Test
+    fun cancellationFromPhaseDeliveryPropagatesWithoutSaving() = runBlocking {
+        val task = createRunTask(temporaryDirectory)
+        val executor = ScriptedPromptExecutor(listOf("proof"))
+        val engine = createRunEngine(temporaryDirectory, executor)
+        val cancelled = CancellationException("event consumer stopped")
+        var saved = false
+
+        val failure = assertFailsWith<CancellationException> {
+            engine.run(task, 1, onEvent = {
+                if (it is RunEvent.PhaseChanged && it.phase == SamplePhase.Evaluating) throw cancelled
+            }) { saved = true }
+        }
+
+        assertSame(cancelled, failure)
+        assertTrue(!saved)
     }
 }

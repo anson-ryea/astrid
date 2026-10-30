@@ -11,6 +11,7 @@ import domain.TaskStatus
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.CyclicBarrier
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
@@ -47,11 +48,20 @@ class BenchmarkRunnerTest {
             )
             val executor = ScriptedPromptExecutor(List(4) { "proof" })
             val store = RecordingRunStore()
+            val events = mutableListOf<RunEvent>()
             val runner = runner(
                 tasks = listOf(second, first),
                 executor = executor,
                 store = store,
                 specification = runTestSpecification(samplesPerTask = 2, maxConcurrentTasks = 1),
+                onEvent = { event ->
+                    if (event is RunEvent.SampleFinished) {
+                        assertTrue(store.records.any {
+                            it.taskId == event.taskId && it.sampleIndex == event.sampleIndex && it.finalResult == event.result
+                        })
+                    }
+                    events += event
+                },
             )
 
             runner.run()
@@ -70,6 +80,17 @@ class BenchmarkRunnerTest {
             assertEquals(listOf(first.manifest.taskId, second.manifest.taskId), store.taskIds)
             assertEquals(4, executor.prompts.size)
             assertTrue(store.records.all { it.finalResult == EvaluationResult.Accepted })
+            assertEquals(listOf(first, second).flatMap { task ->
+                (1..2).flatMap { sample ->
+                    listOf(
+                        RunEvent.SampleStarted(task.manifest.taskId, sample),
+                        RunEvent.PhaseChanged(task.manifest.taskId, sample, SamplePhase.Preparing),
+                        RunEvent.PhaseChanged(task.manifest.taskId, sample, SamplePhase.Generating),
+                        RunEvent.PhaseChanged(task.manifest.taskId, sample, SamplePhase.Evaluating),
+                        RunEvent.SampleFinished(task.manifest.taskId, sample, EvaluationResult.Accepted),
+                    )
+                }
+            }, events)
         }
     }
 
@@ -177,6 +198,7 @@ class BenchmarkRunnerTest {
 
     @Test
     fun runsTasksOnMultipleThreadsWithinTheConfiguredLimit() = runBlocking {
+        val events = ConcurrentLinkedQueue<RunEvent>()
         val tasks = (1..6).map { createRunTask(temporaryDirectory, id = "task_1.${it}_theorem_11") }
         val barrier = CyclicBarrier(2)
         val active = AtomicInteger()
@@ -198,7 +220,8 @@ class BenchmarkRunnerTest {
 
         withTimeout(30_000.milliseconds) {
             runner(tasks, executor, store,
-                specification = runTestSpecification(samplesPerTask = 2, maxConcurrentTasks = 2)).run()
+                specification = runTestSpecification(samplesPerTask = 2, maxConcurrentTasks = 2),
+                onEvent = { events.add(it) }).run()
         }
 
         assertEquals(2, peak.get())
@@ -207,6 +230,13 @@ class BenchmarkRunnerTest {
         assertTrue(store.records.all { it.finalResult == EvaluationResult.Accepted })
         for (task in tasks) {
             assertEquals(listOf(1, 2), store.records.filter { it.taskId == task.manifest.taskId }.map { it.sampleIndex })
+            for (sample in 1..2) {
+                val started = RunEvent.SampleStarted(task.manifest.taskId, sample)
+                val finished = RunEvent.SampleFinished(task.manifest.taskId, sample, EvaluationResult.Accepted)
+                assertEquals(1, events.count { it == started })
+                assertEquals(1, events.count { it == finished })
+                assertTrue(events.indexOf(started) < events.indexOf(finished))
+            }
         }
         assertEquals("begin", store.events.first())
         assertEquals("complete", store.events.last())
@@ -240,6 +270,7 @@ class BenchmarkRunnerTest {
 
     @Test
     fun cancellationStopsActiveTasksAndMarksTheRunFailed() = runBlocking {
+        val events = ConcurrentLinkedQueue<RunEvent>()
         val tasks = (1..3).map { createRunTask(temporaryDirectory, id = "task_1.${it}_theorem_11") }
         val started = AtomicInteger()
         val stopped = AtomicInteger()
@@ -254,7 +285,7 @@ class BenchmarkRunnerTest {
         }
         val store = RecordingRunStore()
         val runner = runner(tasks, executor, store,
-            specification = runTestSpecification(maxConcurrentTasks = 2))
+            specification = runTestSpecification(maxConcurrentTasks = 2), onEvent = { events.add(it) })
 
         withTimeout(10_000.milliseconds) {
             val running = async { runner.run() }
@@ -267,6 +298,8 @@ class BenchmarkRunnerTest {
         assertTrue(store.records.isEmpty())
         assertEquals(listOf("begin", "fail"), store.events)
         assertTrue(!store.failureReason.isNullOrBlank())
+        assertEquals(2, events.filterIsInstance<RunEvent.SampleStarted>().size)
+        assertTrue(events.none { it is RunEvent.SampleFinished })
     }
 
     @Test
@@ -284,17 +317,54 @@ class BenchmarkRunnerTest {
     @Test
     fun marksRunFailedWhenSavingThrows() {
         runBlocking {
+            val events = mutableListOf<RunEvent>()
             val task = createRunTask(temporaryDirectory)
             val store = RecordingRunStore(saveFailure = IllegalStateException("disk unavailable"))
 
             val failure = assertFailsWith<IllegalStateException> {
-                runner(listOf(task), ScriptedPromptExecutor(listOf("proof")), store).run()
+                runner(listOf(task), ScriptedPromptExecutor(listOf("proof")), store,
+                    onEvent = { events += it }).run()
             }
 
             assertEquals("disk unavailable", failure.message)
             assertEquals(listOf("begin", "save:${task.manifest.taskId}:1", "fail"), store.events)
             assertEquals("disk unavailable", store.failureReason)
+            assertTrue(events.none { it is RunEvent.SampleFinished })
         }
+    }
+
+    @Test
+    fun phaseDeliveryFailuresFailTheRunWithoutPersistingASampleOutcome() = runBlocking {
+        val task = createRunTask(temporaryDirectory)
+        for (phase in SamplePhase.entries) {
+            val failure = IllegalStateException("event delivery failed in $phase")
+            val store = RecordingRunStore()
+            val thrown = assertFailsWith<IllegalStateException> {
+                runner(listOf(task), ScriptedPromptExecutor(listOf("bad", "good")), store,
+                    assessSubmission = { _, _ -> EvaluationResult.Rejected("retry") },
+                    onEvent = { event ->
+                        if (event is RunEvent.PhaseChanged && event.phase == phase) throw failure
+                    }).run()
+            }
+            // Coroutine stack recovery may copy exceptions crossing worker boundaries.
+            assertEquals(failure.message, thrown.message)
+            assertTrue(store.records.isEmpty())
+            assertEquals(listOf("begin", "fail"), store.events)
+            assertEquals(failure.message, store.failureReason)
+        }
+    }
+
+    @Test
+    fun reportsInfrastructureFailuresAsFinishedSamplesAfterSaving() = runBlocking {
+        val task = createRunTask(temporaryDirectory)
+        val store = RecordingRunStore()
+        val events = mutableListOf<RunEvent>()
+        runner(listOf(task), ScriptedPromptExecutor(emptyList()), store, onEvent = { events += it }).run()
+
+        val finished = assertIs<RunEvent.SampleFinished>(events.last())
+        assertIs<EvaluationResult.InfrastructureFailure>(finished.result)
+        assertEquals(store.records.single().finalResult, finished.result)
+        assertEquals("complete", store.events.last())
     }
 
     @Test
@@ -359,6 +429,7 @@ class BenchmarkRunnerTest {
         assessSubmission: (BenchmarkTask, String) -> EvaluationResult = { _, _ ->
             EvaluationResult.Accepted
         },
+        onEvent: suspend (RunEvent) -> Unit = {},
     ): BenchmarkRunner {
         val repository = object : TaskRepository {
             override fun findAll(): List<BenchmarkTask> = tasks
@@ -377,6 +448,7 @@ class BenchmarkRunnerTest {
                 assessSubmission = assessSubmission,
             ),
             store = store,
+            onEvent = onEvent,
         )
     }
 

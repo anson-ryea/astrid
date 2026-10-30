@@ -13,13 +13,18 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
-/** Runs tasks concurrently, keeping each task's samples sequential and durably saved. */
+/**
+ * Runs tasks concurrently, keeping each task's samples sequential and durably saved.
+ * [onEvent] is called from concurrent workers; consumers must support concurrent calls.
+ * Delivery is suspending and failures propagate as run failures.
+ */
 class BenchmarkRunner(
     private val repository: TaskRepository,
     private val selector: TaskSelector,
     private val engine: TaskRunEngine,
     private val store: RunStore,
     private val packageVerifier: TaskPackageVerifier = TaskPackageVerifier(),
+    private val onEvent: suspend (RunEvent) -> Unit = {},
 ) {
     suspend fun run() {
         val tasks = selector.select(repository.findAll())
@@ -46,9 +51,11 @@ class BenchmarkRunner(
                     async(Dispatchers.IO) {
                         for (task in pendingTasks) {
                             for (sampleIndex in 1..engine.specification.samplesPerTask) {
+                                onEvent(RunEvent.SampleStarted(task.manifest.taskId, sampleIndex))
                                 // Every evaluation outcome is a sample result, not a run error.
-                                engine.run(task, sampleIndex) { record ->
+                                engine.run(task, sampleIndex, onEvent = onEvent) { record ->
                                     saveMutex.withLock { store.save(record) }
+                                    onEvent(RunEvent.SampleFinished(record.taskId, record.sampleIndex, record.finalResult))
                                 }
                             }
                         }

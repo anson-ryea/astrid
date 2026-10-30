@@ -44,9 +44,14 @@ class TaskRunEngine(
         }
     }
 
+    /**
+     * Reports sample phases through [onEvent]; lifecycle events belong to [BenchmarkRunner].
+     * Event delivery suspends execution and delivery failures propagate without becoming sample outcomes.
+     */
     suspend fun run(
         task: BenchmarkTask,
         sampleIndex: Int,
+        onEvent: suspend (RunEvent) -> Unit = {},
         saveRecord: suspend (TaskRunRecord) -> Unit = {},
     ): TaskRunRecord {
         require(sampleIndex > 0) { "sample index must be positive" }
@@ -55,6 +60,7 @@ class TaskRunEngine(
         }
 
         // Preparation failures are run errors, not model samples.
+        onEvent(RunEvent.PhaseChanged(task.manifest.taskId, sampleIndex, SamplePhase.Preparing))
         packageVerifier.verify(task)
         evaluators.findFor(task).validateTask(task)
         val session = workspaceFactory?.prepare(task)?.create()
@@ -63,14 +69,30 @@ class TaskRunEngine(
             throw failure
         }
         session.use { session ->
-            val record = runPrepared(task, sampleIndex, session)
+            val record = runPrepared(task, sampleIndex, session, onEvent)
             // The orchestrator durably saves the record while the workspace still exists.
             saveRecord(record)
             return record
         }
     }
 
-    private suspend fun runPrepared(task: BenchmarkTask, sampleIndex: Int, session: TaskWorkspaceSession?): TaskRunRecord {
+    private suspend fun runPrepared(
+        task: BenchmarkTask,
+        sampleIndex: Int,
+        session: TaskWorkspaceSession?,
+        onEvent: suspend (RunEvent) -> Unit,
+    ): TaskRunRecord {
+        // Keep the original failure even if Koog wraps an exception thrown inside its strategy.
+        var eventDeliveryFailure: Exception? = null
+        suspend fun phaseChanged(phase: SamplePhase) {
+            try {
+                onEvent(RunEvent.PhaseChanged(task.manifest.taskId, sampleIndex, phase))
+            } catch (failure: Exception) {
+                eventDeliveryFailure = failure
+                throw failure
+            }
+        }
+
         val workspace = session?.workspace
         val protocol = protocols.findFor(task)
         val evaluator = evaluators.findFor(task)
@@ -102,6 +124,7 @@ class TaskRunEngine(
                 var repairTurn = 0
                 while (true) {
                     consumeIteration()
+                    phaseChanged(SamplePhase.Generating)
                     var reply = llm.writeSession {
                         appendPrompt { user(message) }
                         requestLLM()
@@ -148,6 +171,7 @@ class TaskRunEngine(
                                 "model response was truncated at the output-token limit",
                             ))
                         } else {
+                            phaseChanged(SamplePhase.Evaluating)
                             session?.assessDetailed() ?: assess(task, protocol, evaluator, response)
                         }
                     val result = report.result
@@ -164,6 +188,7 @@ class TaskRunEngine(
 
                     if (report.publicDiagnostic == null || !specification.repairPolicy.shouldRepair(repairTurn, result)) break
 
+                    phaseChanged(SamplePhase.Repairing)
                     message = repairPromptRenderer.render(
                         mapOf("DIAGNOSTIC" to report.publicDiagnostic),
                     )
@@ -204,6 +229,7 @@ class TaskRunEngine(
         } catch (failure: CancellationException) {
             throw failure
         } catch (failure: Exception) {
+            eventDeliveryFailure?.let { throw it }
             EvaluationResult.InfrastructureFailure(
                 buildString {
                     append("agent execution failed: ${failure.javaClass.simpleName}")
