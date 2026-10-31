@@ -112,7 +112,7 @@ class RunDashboardTest {
             snapshot.reduce(RunEvent.PhaseChanged(id, 1, SamplePhase.Generating))
         }
         for (width in listOf(32, 80, 160)) {
-            for (height in listOf(2, 3, 4, 5, 8, 9, 10, 12, 24)) {
+            for (height in listOf(2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 24)) {
                 val frame = RunDashboard(metadata).render(state, 5.seconds, width, height)
                 val rendered = frame.render(terminal(width), width)
                 assertTrue(rendered.height <= height - 1,
@@ -122,6 +122,14 @@ class RunDashboardTest {
                 if (height >= 8) {
                     assertContains(text, "astrid", ignoreCase = true)
                     assertContains(text, "GENERATING")
+                }
+                if (width == 160 && height >= 8) {
+                    val expectedSpacers = when (height) { 8 -> 0; 9 -> 1; 10 -> 2; else -> 3 }
+                    assertEquals(expectedSpacers, text.lines().dropLast(1).count { it.isBlank() },
+                        "spacing compacted before it needed to at $height rows")
+                    assertContains(text, "/datasets/pl-suite")
+                    assertContains(text, "/runs/proofs-01")
+                    assertContains(text, "repairing")
                 }
             }
         }

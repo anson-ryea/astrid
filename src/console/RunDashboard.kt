@@ -112,10 +112,12 @@ class RunDashboard(private val context: RunDashboardContext) {
         }
         val showDataset = availableHeight >= summary.size + 4
         val showOutput = output != null && showDataset && availableHeight >= summary.size + 5
-        val spacious = availableHeight >= 14
         val fixedRows = (if (availableHeight > 1) 1 else 0) + summary.size + 1 +
-            (if (showDataset) 1 else 0) + (if (showOutput) 1 else 0) + (if (spacious) 3 else 0)
-        val activeBudget = (availableHeight - fixedRows).coerceAtLeast(0)
+            (if (showDataset) 1 else 0) + (if (showOutput) 1 else 0)
+        val activityRows = if (status == RunDashboardStatus.Running && active.isNotEmpty()) 2 else 1
+        // Retain normal spacing until the content needs its rows, then compact gradually.
+        val spacerRows = (availableHeight - fixedRows - activityRows).coerceIn(0, 3)
+        val activeBudget = (availableHeight - fixedRows - spacerRows).coerceAtLeast(0)
         val commonPhase = active.map { it.value }.distinct().singleOrNull()
         val runLabel = when (status) {
             RunDashboardStatus.Quitting -> "QUITTING"
@@ -146,12 +148,12 @@ class RunDashboard(private val context: RunDashboardContext) {
         val body = verticalLayout {
             spacing = 0
             if (availableHeight > 1) cell(header)
-            if (spacious) cell("")
+            if (spacerRows >= 3) cell("")
             if (showDataset) cell(line("  $dataset"))
             if (showOutput) cell(line("  $output"))
-            if (spacious) cell("")
+            if (spacerRows >= 2) cell("")
             summary.forEach { cell(it) }
-            if (spacious) cell("")
+            if (spacerRows >= 1) cell("")
             if (activeBudget > 0) {
                 val badge = (black on runColour)(bold(" $runLabel "))
                 if (status == RunDashboardStatus.Running && active.isNotEmpty()) {
@@ -211,7 +213,7 @@ class RunDashboard(private val context: RunDashboardContext) {
         val tokens = mutableListOf<Widget>()
         for ((sample, phase) in active) {
             val suffix = if (context.samplesPerTask > 1) " (sample ${sample.sampleIndex}/${context.samplesPerTask})" else ""
-            val text = "◐ ${sample.taskId.value}$suffix"
+            val text = "◤ ${sample.taskId.value}$suffix"
             val separator = if (shown == 0) 0 else 3
             val remaining = active.size - shown - 1
             val overflowWidth = if (remaining > 0) "   +$remaining more".length else 0
