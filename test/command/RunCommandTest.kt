@@ -8,6 +8,9 @@ import com.github.ajalt.mordant.terminal.Terminal
 import com.github.ajalt.mordant.terminal.TerminalRecorder
 import java.nio.file.Files
 import java.nio.file.Path
+import java.time.Clock
+import java.time.Instant
+import java.time.ZoneId
 import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
@@ -31,7 +34,7 @@ class RunCommandTest {
         val command = RunCommand(projectRoot = temporaryDirectory,
             apiKeyProvider = { error("API key must not be read") })
         val failure = assertFailsWith<IllegalArgumentException> {
-            command.parse(listOf(writeConfig(validConfig).toString(), "test-run", "--backend", "rocq"))
+            command.parse(listOf(writeConfig(validConfig).toString(), temporaryDirectory.toString(), "test-run", "--backend", "rocq"))
         }
         assertContains(failure.message.orEmpty(), "unsupported formalisation backend: rocq")
         assertFalse(Files.exists(temporaryDirectory.resolve("runs")))
@@ -195,7 +198,7 @@ class RunCommandTest {
             )
 
             val failure = assertFailsWith<IllegalStateException> {
-                command.parse(listOf(configPath.toString(), "test-run"))
+                command.parse(listOf(configPath.toString(), temporaryDirectory.toString(), "test-run"))
             }
 
             assertContains(failure.message.orEmpty(), "no frozen tasks are available for backend lean")
@@ -210,14 +213,83 @@ class RunCommandTest {
         val command = RunCommand(projectRoot = temporaryDirectory,
             apiKeyProvider = { error("API key must not be read") })
         val failure = assertFailsWith<IllegalStateException> {
-            command.parse(listOf(configPath.toString(), "test-run", "--dataset-root", dataset.toString()))
+            command.parse(listOf(configPath.toString(), temporaryDirectory.toString(), "test-run", "--dataset-root", dataset.toString()))
         }
         assertContains(failure.message.orEmpty(), "no frozen tasks are available for backend lean")
         assertFalse(Files.exists(temporaryDirectory.resolve("runs")))
     }
 
     @Test
-    fun rejectsUnsafeRunIdentifierBeforeReadingConfiguration() {
+    fun defaultsToTheCheckoutDatasetAndGeneratesAnIdFromItsFolderName() = runBlocking {
+        val checkout = Files.createDirectory(temporaryDirectory.resolve("Example Corpus.v1"))
+        writeFrozenProofManifest(checkout)
+        val expectedId = "example_corpus_v1_20261104_120506_123"
+        for (root in listOf<String?>(null, "experiment-runs")) {
+            val recorder = TerminalRecorder(ansiLevel = AnsiLevel.NONE, width = 512)
+            val command = RunCommand(temporaryDirectory,
+                apiKeyProvider = { error("API key must not be read") }, clock = fixedClock)
+            command.configureContext { terminal = Terminal(terminalInterface = recorder) }
+            val arguments = listOf(writeConfig(validConfig).toString(), checkout.toString(), "--ui=live") +
+                (root?.let { listOf("--output-root", it) } ?: emptyList())
+
+            assertFailsWith<java.nio.file.NoSuchFileException> { command.parse(arguments) }
+
+            assertContains(recorder.output(), expectedId)
+            assertContains(recorder.output(), checkout.resolve("dataset").toString())
+            assertContains(recorder.output(), temporaryDirectory.resolve("${root ?: "runs"}/$expectedId").toString())
+            assertFalse(Files.exists(temporaryDirectory.resolve(root ?: "runs")))
+        }
+    }
+
+    @Test
+    fun defaultsTheLeanEnvironmentToTheCheckoutAndHonoursAnOverride() = runBlocking {
+        copyDirectory(SimpleTestDataset.projectRoot.resolve("prompts"), temporaryDirectory.resolve("prompts"))
+        val checkout = copyCheckout(temporaryDirectory.resolve("synthetic"), "proof")
+        val external = Files.createDirectory(temporaryDirectory.resolve("external-environment"))
+        Files.writeString(external.resolve("lean-toolchain"), "test-toolchain\n")
+        val config = validConfig.replace("\"supports_tools\": false", "\"supports_tools\": true")
+            .replace("\"max_agent_iterations\": 20", "\"max_agent_iterations\": 20, \"max_workspace_tool_calls_per_attempt\": 1")
+
+        for (environmentOverride in listOf<Path?>(null, external)) {
+            val command = RunCommand(temporaryDirectory, apiKeyProvider = { error("API key must not be read") })
+            val arguments = listOf(writeConfig(config).toString(), checkout.toString(), "test-run", "--ui=plain") +
+                (environmentOverride?.let { listOf("--environment-root", it.toString()) } ?: emptyList())
+
+            val failure = assertFailsWith<IllegalArgumentException> { command.parse(arguments) }
+
+            // Fail on a missing configuration file before compiling Lean or making model calls.
+            val missing = if (environmentOverride == null) checkout.resolve("lean-toolchain") else external.resolve("lakefile.toml")
+            assertContains(failure.message.orEmpty(), missing.parent.toRealPath().resolve(missing.fileName).toString())
+            assertFalse(Files.exists(temporaryDirectory.resolve("runs")))
+        }
+    }
+
+    @Test
+    fun defaultsPrivateContractsToTheCheckoutAndHonoursAnOverride() = runBlocking {
+        copyDirectory(SimpleTestDataset.projectRoot.resolve("prompts"), temporaryDirectory.resolve("prompts"))
+        for (useOverride in listOf(false, true)) {
+            val checkout = copyCheckout(temporaryDirectory.resolve("corpus-$useOverride"), "definition")
+            SimpleTestDataset.mockLeanEnvironment(checkout)
+            val evaluation = if (useOverride) temporaryDirectory.resolve("external-contracts")
+                else checkout.resolve("private/evaluation")
+            val contract = evaluation.resolve(SimpleTestDataset.task("definition").manifest.evaluation.contract!!.path.value)
+            Files.createDirectories(contract.parent)
+            Files.writeString(contract, "{}")
+            val command = RunCommand(temporaryDirectory, apiKeyProvider = { error("API key must not be read") })
+            val arguments = listOf(writeConfig(validConfig).toString(), checkout.toString(), "test-run", "--ui=plain") +
+                if (useOverride) listOf("--evaluation-root", evaluation.toString()) else emptyList()
+
+            val failure = assertFailsWith<IllegalArgumentException> { command.parse(arguments) }
+
+            // Finding the deliberately corrupted contract proves which root was selected.
+            // Its hash fails before any native Lean process can start.
+            assertContains(failure.message.orEmpty(), "evaluation contract hash mismatch")
+            assertFalse(Files.exists(temporaryDirectory.resolve("runs")))
+        }
+    }
+
+    @Test
+    fun rejectsInvalidPlainRunIdentifierBeforeReadingConfiguration() {
         runBlocking {
             val configPath = writeConfig("not JSON")
             val command = RunCommand(
@@ -226,7 +298,7 @@ class RunCommandTest {
             )
 
             val failure = assertFails {
-                command.parse(listOf(configPath.toString(), "../other"))
+                command.parse(listOf(configPath.toString(), temporaryDirectory.toString(), "Invalid Run ID"))
             }
             assertContains(failure.message.orEmpty(), "run ID must use lower-case letters, digits, underscores or hyphens")
             assertFalse(Files.exists(temporaryDirectory.resolve("runs")))
@@ -235,34 +307,142 @@ class RunCommandTest {
 
     @Test
     fun activatesTheDashboardBeforePreflightAndCleansUpOnPreflightFailure() = runBlocking {
-        val source = SimpleTestDataset.task("proof")
-        val taskDirectory = temporaryDirectory.resolve("dataset/paper_1/tasks/${source.manifest.taskId}")
-        Files.createDirectories(taskDirectory)
-        Files.writeString(taskDirectory.resolve("manifest.json"),
-            Files.readString(source.packageDirectory.resolve("manifest.json"))
-                .replace("candidate_pending_independent_review", "frozen"))
-        val recorder = TerminalRecorder(ansiLevel = AnsiLevel.NONE, width = 120)
+        writeFrozenProofManifest()
+        val recorder = TerminalRecorder(ansiLevel = AnsiLevel.NONE, width = 512)
         val command = RunCommand(temporaryDirectory, apiKeyProvider = { error("API key must not be read") })
         command.configureContext { terminal = Terminal(terminalInterface = recorder) }
 
         assertFailsWith<java.nio.file.NoSuchFileException> {
             // Missing prompt files fail preflight, before any credentials or model requests.
-            command.parse(listOf(writeConfig(validConfig).toString(), "test-run", "--ui=live"))
+            command.parse(listOf(writeConfig(validConfig).toString(), temporaryDirectory.toString(), "test-run", "--ui=live"))
         }
         assertContains(recorder.output(), "PREPARING")
         assertContains(recorder.output(), "FAILED")
+        assertContains(recorder.output(), temporaryDirectory.resolve("runs/test-run").toString())
         assertTrue(recorder.output().endsWith("\u001b[?25h"))
         assertFalse(Files.exists(temporaryDirectory.resolve("runs")))
+    }
+
+    @Test
+    fun storesNamedRunsUnderAnAbsoluteOrRelativeOutputRoot() = runBlocking {
+        writeFrozenProofManifest()
+        for (root in listOf(temporaryDirectory.resolve("absolute-root").toString(), "relative-root")) {
+            val expected = temporaryDirectory.resolve(root).resolve("test-run").normalize()
+            val recorder = TerminalRecorder(ansiLevel = AnsiLevel.NONE, width = 512)
+            val command = RunCommand(temporaryDirectory, apiKeyProvider = { error("API key must not be read") })
+            command.configureContext { terminal = Terminal(terminalInterface = recorder) }
+
+            assertFailsWith<java.nio.file.NoSuchFileException> {
+                command.parse(listOf(writeConfig(validConfig).toString(), temporaryDirectory.toString(), "test-run",
+                    "--output-root", root, "--ui=live"))
+            }
+
+            assertContains(recorder.output(), expected.toString())
+            assertFalse(Files.exists(expected.parent), "preflight failures must not create output parents")
+            assertFalse(Files.exists(temporaryDirectory.resolve("runs")))
+        }
+    }
+
+    @Test
+    fun runPathsBypassTheOutputRootAndRelativePathsUseTheWorkingDirectory() = runBlocking {
+        val working = Files.createDirectory(temporaryDirectory.resolve("working"))
+        writeFrozenProofManifest(working)
+        val ignoredRoot = Files.createDirectory(working.resolve("ignored-root"))
+        val sentinel = ignoredRoot.resolve("keep.txt")
+        Files.writeString(sentinel, "other runs")
+        for (output in listOf(temporaryDirectory.resolve("absolute/output").toString(),
+            "relative/Run A.v1", "./direct-run", "../sibling-run")) {
+            val expected = working.resolve(output).normalize()
+            val recorder = TerminalRecorder(ansiLevel = AnsiLevel.NONE, width = 512)
+            val command = RunCommand(working, apiKeyProvider = { error("API key must not be read") })
+            command.configureContext { terminal = Terminal(terminalInterface = recorder) }
+
+            assertFailsWith<java.nio.file.NoSuchFileException> {
+                command.parse(listOf(writeConfig(validConfig).toString(), working.toString(), output,
+                    "--output-root", ignoredRoot.toString(), "--ui=live"))
+            }
+
+            assertContains(recorder.output(), expected.toString())
+            assertFalse(ignoredRoot.resolve(expected.fileName).toString() in recorder.output())
+            assertFalse(Files.exists(expected), "preflight failures must not create run directories")
+            assertEquals("other runs", Files.readString(sentinel))
+            assertFalse(Files.exists(working.resolve("runs")))
+        }
+    }
+
+    @Test
+    fun refusesExistingNamedAndPathOutputsWithoutChangingTheirContents() = runBlocking {
+        writeFrozenProofManifest()
+        val output = Files.createDirectories(temporaryDirectory.resolve("existing-output/test-run"))
+        val saved = output.resolve("keep.txt")
+        Files.writeString(saved, "previous results")
+        for (destination in listOf(listOf(output.toString()),
+            listOf("test-run", "--output-root", output.parent.toString()))) {
+            val command = RunCommand(temporaryDirectory, apiKeyProvider = { error("API key must not be read") })
+
+            val failure = assertFailsWith<IllegalStateException> {
+                command.parse(listOf(writeConfig(validConfig).toString(), temporaryDirectory.toString()) + destination)
+            }
+
+            assertContains(failure.message.orEmpty(), "run directory already exists: $output")
+            assertEquals("previous results", Files.readString(saved))
+            assertFalse(Files.exists(temporaryDirectory.resolve("runs")))
+        }
+    }
+
+    @Test
+    fun rejectsSymbolicLinkOutputParentsBeforePreflight() = runBlocking {
+        writeFrozenProofManifest()
+        val realParent = Files.createDirectory(temporaryDirectory.resolve("real-output"))
+        val linkedParent = temporaryDirectory.resolve("linked-output")
+        Files.createSymbolicLink(linkedParent, realParent)
+        for (destination in listOf(listOf(linkedParent.resolve("run").toString()),
+            listOf("run", "--output-root", linkedParent.toString()))) {
+            val command = RunCommand(temporaryDirectory, apiKeyProvider = { error("API key must not be read") })
+
+            val failure = assertFailsWith<IllegalStateException> {
+                command.parse(listOf(writeConfig(validConfig).toString(), temporaryDirectory.toString()) + destination)
+            }
+
+            assertContains(failure.message.orEmpty(), "run directory parent must not be a symbolic link")
+            assertFalse(Files.exists(realParent.resolve("run")))
+        }
     }
 
     @Test
     fun validatesUiModeBeforeExecution() = runBlocking {
         val command = RunCommand(temporaryDirectory, apiKeyProvider = { error("API key must not be read") })
         val failure = assertFails {
-            command.parse(listOf(writeConfig("not JSON").toString(), "test-run", "--ui=invalid"))
+            command.parse(listOf(writeConfig("not JSON").toString(), temporaryDirectory.toString(), "test-run", "--ui=invalid"))
         }
         assertContains(failure.message.orEmpty(), "invalid")
         assertContains(failure.message.orEmpty(), "live")
+    }
+
+    private fun writeFrozenProofManifest(checkout: Path = temporaryDirectory) {
+        val source = SimpleTestDataset.task("proof")
+        val taskDirectory = checkout.resolve("dataset/paper_1/tasks/${source.manifest.taskId}")
+        Files.createDirectories(taskDirectory)
+        Files.writeString(taskDirectory.resolve("manifest.json"),
+            Files.readString(source.packageDirectory.resolve("manifest.json"))
+                .replace("candidate_pending_independent_review", "frozen"))
+    }
+
+    private fun copyCheckout(directory: Path, result: String): Path {
+        copyDirectory(SimpleTestDataset.datasetRoot, directory.resolve("dataset"))
+        val task = SimpleTestDataset.task(result)
+        val manifest = directory.resolve("dataset/paper_1/tasks/${task.manifest.taskId}/manifest.json")
+        Files.writeString(manifest, Files.readString(manifest).replace("candidate_pending_independent_review", "frozen"))
+        return directory.toRealPath()
+    }
+
+    private fun copyDirectory(source: Path, destination: Path) {
+        Files.walk(source).use { paths ->
+            paths.forEach { path ->
+                val target = destination.resolve(source.relativize(path))
+                if (Files.isDirectory(path)) Files.createDirectories(target) else Files.copy(path, target)
+            }
+        }
     }
 
     private fun writeConfig(contents: String): Path {
@@ -270,6 +450,8 @@ class RunCommandTest {
         Files.writeString(path, contents)
         return path
     }
+
+    private val fixedClock = Clock.fixed(Instant.parse("2026-11-04T04:05:06.123Z"), ZoneId.of("Asia/Hong_Kong"))
 
     private val validConfig = """
         {

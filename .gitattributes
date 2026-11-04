@@ -1,0 +1,2 @@
+# Fixture hashes must be identical on Unix and Windows checkouts.
+testResources/** text=auto eol=lf

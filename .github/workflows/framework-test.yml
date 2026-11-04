@@ -15,3 +15,10 @@ jobs:
       - uses: actions/checkout@v7
       - name: Run synthetic fixture tests
         run: ./kotlin test --exclude-tag=lean-integration
+
+  windows-paths:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Run Windows path and command tests
+        run: .\kotlin.bat test --include-classes=command.RunCommandTest --include-classes=command.RunOutputPathWindowsTest

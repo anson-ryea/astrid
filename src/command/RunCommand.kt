@@ -6,8 +6,10 @@ import com.github.ajalt.clikt.command.SuspendingCliktCommand
 import com.github.ajalt.clikt.core.Context
 import com.github.ajalt.clikt.core.terminal
 import com.github.ajalt.clikt.parameters.arguments.argument
-import com.github.ajalt.clikt.parameters.arguments.check
+import com.github.ajalt.clikt.parameters.arguments.convert
+import com.github.ajalt.clikt.parameters.arguments.defaultLazy
 import com.github.ajalt.clikt.parameters.options.default
+import com.github.ajalt.clikt.parameters.options.defaultLazy
 import com.github.ajalt.clikt.parameters.options.option
 import com.github.ajalt.clikt.parameters.types.path
 import com.github.ajalt.clikt.parameters.types.choice
@@ -22,7 +24,11 @@ import dataset.JsonTaskManifestReader
 import dataset.TaskPackageVerifier
 import io.github.cdimascio.dotenv.dotenv
 import java.nio.file.Files
+import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Path
+import java.time.Clock
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 import kotlin.time.TimeSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -48,36 +54,55 @@ class RunCommand(
             }["OPENROUTER_API_KEY"]
     },
     private val configReader: JsonBenchmarkRunConfigReader = JsonBenchmarkRunConfigReader(),
+    private val clock: Clock = Clock.systemDefaultZone(),
 ) : SuspendingCliktCommand("run") {
     private val projectRoot = projectRoot.toAbsolutePath().normalize()
 
     override fun help(context: Context): String =
-        "Run frozen tasks with a registered backend, V1 configuration and new run ID."
+        "Run frozen tasks from a dataset checkout with a V1 configuration and optional run name or output path."
 
     private val configPath by argument(help = "V1 benchmark run configuration")
         .path(mustExist = true, canBeDir = false)
-    private val runId by argument(help = "Unique lower-case run ID")
-        .check("run ID must use lower-case letters, digits, underscores or hyphens", runIdPattern::matches)
-    private val datasetRoot by option(
-        "--dataset-root",
-        help = "Dataset to run; defaults to this project's dataset directory",
-    )
+    private val datasetPath by argument(help = "Dataset checkout directory containing dataset/ and its backend environment")
         .path(mustExist = true, canBeFile = false)
-        .default(projectRoot.resolve("dataset"))
+    private val runIdOrPath by argument("RUN_ID", help = "Run name or output path; defaults to <dataset-folder>_<timestamp>")
+        .convert { value ->
+            require(isRunPath(value) || runIdPattern.matches(value)) {
+                "run ID must use lower-case letters, digits, underscores or hyphens, or be a path"
+            }
+            value
+        }
+        .defaultLazy(defaultForHelp = "<dataset-folder>_<timestamp>") { defaultRunId() }
     private val backendId by option("--backend", help = "Formalisation backend")
         .default("lean")
-    private val evaluationRoot by option("--evaluation-root", help = "Runner-only semantic contracts; never exposed to models")
-        .path(canBeFile = false).default(projectRoot.resolve("private/evaluation"))
+    private val datasetRoot by option(
+        "--dataset-root",
+        help = "Task directory; defaults to <dataset-path>/dataset",
+    )
+        .path(mustExist = true, canBeFile = false)
+        .defaultLazy(defaultForHelp = "<dataset-path>/dataset") { datasetPath.resolve("dataset") }
+    private val evaluationRoot by option("--evaluation-root",
+        help = "Runner-only semantic contracts; defaults to <dataset-path>/private/evaluation")
+        .path(canBeFile = false)
+        .defaultLazy(defaultForHelp = "<dataset-path>/private/evaluation") { datasetPath.resolve("private/evaluation") }
     private val environmentRoot by option(
         "--environment-root",
-        help = "Pinned backend project and dependency cache; defaults to the Astrid project",
+        help = "Pinned backend project and dependency cache; defaults to <dataset-path>",
     ).path(mustExist = true, canBeFile = false)
+        .defaultLazy(defaultForHelp = "<dataset-path>") { datasetPath }
+    private val outputRoot by option(
+        "--output-root",
+        help = "Directory for named runs; defaults to runs/. Ignored when RUN_ID is a path",
+    ).path(canBeFile = false).default(Path.of("runs"))
     private val uiMode by option("--ui", help = "Dashboard mode: auto detects a terminal, live forces animation, plain prints milestones")
         .choice("auto" to RunConsoleMode.Auto, "live" to RunConsoleMode.Live, "plain" to RunConsoleMode.Plain)
         .default(RunConsoleMode.Auto)
 
     override suspend fun run() {
         val startedAt = TimeSource.Monotonic.markNow()
+        val datasetRoot = this.datasetRoot.toAbsolutePath().normalize()
+        val environmentRoot = this.environmentRoot.toAbsolutePath().normalize()
+        val evaluationRoot = this.evaluationRoot.toAbsolutePath().normalize()
         val runConfig = configReader.read(configPath)
         val specification = runConfig.toSpecification()
         val repository = FileTaskRepository(
@@ -85,10 +110,10 @@ class RunCommand(
             JsonTaskManifestReader(),
         )
         val backend = BackendRegistry(listOf(LeanBackend(
-            (environmentRoot ?: projectRoot).toAbsolutePath().normalize(),
-            datasetRoot.toAbsolutePath().normalize(),
+            environmentRoot,
+            datasetRoot,
             projectRoot.resolve("prompts"),
-            evaluationRoot.toAbsolutePath().normalize(),
+            evaluationRoot,
         ))).find(backendId)
         val selector = TaskSelector(backend.evaluationKinds)
         val selected = selector.select(repository.findAll())
@@ -108,12 +133,14 @@ class RunCommand(
         val repairPromptRenderer = PromptRenderer(
             promptDirectory.resolve("repair.md"),
         )
-        val runsDirectory = projectRoot.resolve("runs")
-        check(!Files.isSymbolicLink(runsDirectory)) {
-            "runs directory must not be a symbolic link: $runsDirectory"
+        val runIsPath = isRunPath(runIdOrPath)
+        val runDirectory = resolveRunDirectory(projectRoot, outputRoot, runIdOrPath)
+        val runId = if (runIsPath) runDirectory.fileName?.toString() ?: runIdOrPath else runIdOrPath
+        val outputParent = requireNotNull(runDirectory.parent) { "run directory must have a parent" }
+        check(!Files.isSymbolicLink(outputParent)) {
+            "run directory parent must not be a symbolic link: $outputParent"
         }
-        val runDirectory = runsDirectory.resolve(runId)
-        check(Files.notExists(runDirectory)) {
+        check(Files.notExists(runDirectory, NOFOLLOW_LINKS)) {
             "run directory already exists: $runDirectory"
         }
 
@@ -150,7 +177,7 @@ class RunCommand(
                 onEvent(RunEvent.RunPhaseChanged(RunPhase.ResolvingModel))
                 OpenRouterConnection(apiKey).use { connection ->
                     val resolvedSpecification = specification.copy(model = connection.resolveModel(specification.model))
-                    withContext(Dispatchers.IO) { Files.createDirectories(runsDirectory) }
+                    withContext(Dispatchers.IO) { Files.createDirectories(outputParent) }
                     val engine = TaskRunEngine(
                         protocols = protocols,
                         evaluators = backend.evaluators,
@@ -192,7 +219,14 @@ class RunCommand(
         console.printMessage("Benchmark run complete: $runDirectory", green)
     }
 
+    private fun defaultRunId(): String {
+        val datasetName = datasetPath.toAbsolutePath().normalize().fileName?.toString().orEmpty()
+            .lowercase(Locale.ROOT).replace(Regex("[^a-z0-9_-]+"), "_").trim('_', '-').ifEmpty { "dataset" }
+        return "${datasetName}_${runTimestamp.withZone(clock.zone).format(clock.instant())}"
+    }
+
     private companion object {
         val runIdPattern = Regex("[a-z0-9][a-z0-9_-]*")
+        val runTimestamp: DateTimeFormatter = DateTimeFormatter.ofPattern("uuuuMMdd_HHmmss_SSS", Locale.ROOT)
     }
 }
