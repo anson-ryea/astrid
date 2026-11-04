@@ -1,4 +1,4 @@
-name = "astrid"
+name = "astrid_tests"
 version = "0.1.0"
 keywords = ["math"]
 defaultTargets = ["dataset"]
@@ -16,7 +16,4 @@ rev = "v4.34.1"
 
 [[lean_lib]]
 name = "dataset"
-globs = [
-  "dataset.paper_1.formalisation.+",
-  "dataset.paper_1.audit.+"
-]
+globs = ["dataset.+"]

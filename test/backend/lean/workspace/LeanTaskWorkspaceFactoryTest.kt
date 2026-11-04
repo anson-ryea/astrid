@@ -28,9 +28,11 @@ import run.tools.WorkspaceTools
 class LeanTaskWorkspaceFactoryTest {
     @TempDir
     lateinit var temporaryDirectory: Path
-    private val projectRoot = Path.of("").toAbsolutePath().normalize()
+    private val environmentRoot by lazy {
+        SimpleTestDataset.mockLeanEnvironment(temporaryDirectory.toRealPath().resolve("environment"))
+    }
     private val task = SimpleTestDataset.task("proof")
-    private fun factory() = LeanTaskWorkspaceFactory(projectRoot, SimpleTestDataset.datasetRoot,
+    private fun factory() = LeanTaskWorkspaceFactory(environmentRoot, SimpleTestDataset.datasetRoot,
         buildDependencies = { _, _ -> },
         leanProcessFactory = { LeanProcess { _, _ -> LeanProcessResult.Completed(0, "'Benchmark.target' does not depend on any axioms") } })
 
@@ -66,7 +68,7 @@ class LeanTaskWorkspaceFactoryTest {
         }
         assertFalse(Files.exists(firstRoot))
         assertFalse(Files.exists(secondRoot))
-        assertTrue(Files.isDirectory(projectRoot.resolve(".lake/packages/mathlib")))
+        assertTrue(Files.isDirectory(environmentRoot.resolve(".lake/packages")))
     }
 
     @Test
@@ -227,7 +229,7 @@ class LeanTaskWorkspaceFactoryTest {
     @Test
     fun removesPartiallyPreparedWorkspaceWhenDependencyBuildFails() {
         var stagedRoot: Path? = null
-        val factory = LeanTaskWorkspaceFactory(projectRoot, SimpleTestDataset.datasetRoot, buildDependencies = { root, _ ->
+        val factory = LeanTaskWorkspaceFactory(environmentRoot, SimpleTestDataset.datasetRoot, buildDependencies = { root, _ ->
             stagedRoot = root
             error("build failed")
         })

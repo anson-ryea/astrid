@@ -21,6 +21,9 @@ class LeanPackageValidatorTest {
     private val original = SimpleTestDataset.task("proof")
     private val reader = JsonTaskManifestReader()
     private val hash = HashCalculator()
+    private val mockEnvironment by lazy {
+        SimpleTestDataset.mockLeanEnvironment(temporaryDirectory.toRealPath().resolve("environment"))
+    }
 
     /** An additional paper in an external dataset, with no evaluator or Lake configuration edits. */
     private fun fixture(): BenchmarkTask {
@@ -78,10 +81,10 @@ class LeanPackageValidatorTest {
     private fun validator(realLean: Boolean = false): LeanPackageValidator {
         val root = temporaryDirectory.toRealPath()
         val profiles = LeanValidationProfileReader(root.resolve("private/validation"), root.resolve("private"))
-        if (realLean) return LeanPackageValidator(LeanTaskWorkspaceFactory(project, root.resolve("dataset"),
+        if (realLean) return LeanPackageValidator(LeanTaskWorkspaceFactory(SimpleTestDataset.environmentRoot, root.resolve("dataset"),
             promptRoot = project.resolve("prompts")), profiles)
         val process = LeanProcess { _, _ -> LeanProcessResult.Completed(0, "'Benchmark.target' does not depend on any axioms") }
-        val factory = LeanTaskWorkspaceFactory(project, root.resolve("dataset"), promptRoot = project.resolve("prompts"),
+        val factory = LeanTaskWorkspaceFactory(mockEnvironment, root.resolve("dataset"), promptRoot = project.resolve("prompts"),
             buildDependencies = { _, _ -> }, leanProcessFactory = { process })
         return LeanPackageValidator(factory, profiles, processFactory = { process })
     }
@@ -111,7 +114,7 @@ class LeanPackageValidatorTest {
     @Test fun continuesAfterAPackageFailureAndReportsEverySelectedTask() {
         val tasks = SimpleTestDataset.tasks().filter { it.manifest.protocol.value == "lean_proof" }
         val process = LeanProcess { _, _ -> LeanProcessResult.Completed(0, "'Benchmark.target' does not depend on any axioms") }
-        val factory = LeanTaskWorkspaceFactory(project, SimpleTestDataset.datasetRoot, buildDependencies = { _, _ -> }, leanProcessFactory = { process })
+        val factory = LeanTaskWorkspaceFactory(mockEnvironment, SimpleTestDataset.datasetRoot, buildDependencies = { _, _ -> }, leanProcessFactory = { process })
         val failingFactory = workspace.TaskWorkspaceFactory { task ->
             if (task.manifest.taskId == tasks.first().manifest.taskId) error("synthetic package failure")
             factory.prepare(task)

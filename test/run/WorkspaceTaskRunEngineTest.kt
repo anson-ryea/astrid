@@ -37,6 +37,11 @@ import kotlinx.serialization.json.jsonPrimitive
 import prompt.PromptRenderer
 
 class WorkspaceTaskRunEngineTest {
+    @org.junit.jupiter.api.io.TempDir
+    lateinit var temporaryDirectory: Path
+    private val environmentRoot by lazy {
+        SimpleTestDataset.mockLeanEnvironment(temporaryDirectory.toRealPath().resolve("environment"))
+    }
     private val projectRoot = Path.of("").toAbsolutePath().normalize()
     private val task = SimpleTestDataset.task("proof").let { task ->
         task.copy(manifest = task.manifest.copy(status = domain.TaskStatus.FROZEN))
@@ -57,7 +62,7 @@ class WorkspaceTaskRunEngineTest {
                 maxWorkspaceToolCallsPerAttempt = budget),
             PromptRenderer(prompts.resolve("agent-system.md")), PromptRenderer(prompts.resolve("repair.md")),
             toolRegistry = otherTools,
-            workspaceFactory = LeanTaskWorkspaceFactory(projectRoot, SimpleTestDataset.datasetRoot, buildDependencies = { root, _ -> roots.add(root) },
+            workspaceFactory = LeanTaskWorkspaceFactory(environmentRoot, SimpleTestDataset.datasetRoot, buildDependencies = { root, _ -> roots.add(root) },
                 leanProcessFactory = { LeanProcess { source, _ -> check(source) } }),
         )
     }

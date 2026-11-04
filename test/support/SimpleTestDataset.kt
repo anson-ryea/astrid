@@ -6,12 +6,18 @@ import backend.lean.workspace.LeanTaskWorkspaceFactory
 import dataset.FileTaskRepository
 import dataset.JsonTaskManifestReader
 import domain.BenchmarkTask
+import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.StandardCopyOption.REPLACE_EXISTING
 
 /** Test data and evaluator-only answers, independent of the curated benchmark. */
 internal object SimpleTestDataset {
     val projectRoot: Path = Path.of("").toAbsolutePath().normalize()
     val resourceRoot: Path = projectRoot.resolve("testResources")
+    private val leanConfigurationRoot: Path = resourceRoot.resolve("lean")
+    val environmentRoot: Path by lazy {
+        copyLeanConfiguration(projectRoot.resolve("build/test-lean"))
+    }
     val datasetRoot: Path = resourceRoot.resolve("dataset/simple")
     val evaluationRoot: Path = resourceRoot.resolve("evaluation/simple")
     val privateRoot: Path = resourceRoot.resolve("private/simple")
@@ -25,5 +31,20 @@ internal object SimpleTestDataset {
 
     fun profiles() = LeanValidationProfileReader(privateRoot.resolve("validation"), privateRoot)
 
-    fun workspaceFactory() = LeanTaskWorkspaceFactory(projectRoot, datasetRoot, evaluationRoot = evaluationRoot)
+    /** Unit tests snapshot real configuration but never load dependencies or invoke Lean. */
+    fun mockLeanEnvironment(root: Path): Path {
+        Files.createDirectories(root.resolve(".lake/packages"))
+        return copyLeanConfiguration(root)
+    }
+
+    private fun copyLeanConfiguration(root: Path): Path {
+        Files.createDirectories(root)
+        for (name in listOf("lean-toolchain", "lakefile.toml", "lake-manifest.json")) {
+            Files.copy(leanConfigurationRoot.resolve(name), root.resolve(name), REPLACE_EXISTING)
+        }
+        return root
+    }
+
+    fun workspaceFactory() = LeanTaskWorkspaceFactory(environmentRoot, datasetRoot,
+        promptRoot = projectRoot.resolve("prompts"), evaluationRoot = evaluationRoot)
 }

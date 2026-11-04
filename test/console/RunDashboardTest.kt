@@ -151,7 +151,7 @@ class RunDashboardTest {
     fun writesReferenceFramesForVisualReview() {
         val ids = (1..12).map { TaskId("task_1.${it}_theorem_11") }
         val metadata = context.copy(
-            datasetRoot = Path.of("/Users/anson/Documents/Projects/astrid/dataset"),
+            datasetRoot = support.SimpleTestDataset.datasetRoot,
             taskSubmissions = ids.associateWith { SubmissionKind("lean_proof_body") }, samplesPerTask = 1,
         )
         var state = RunDashboardState()
