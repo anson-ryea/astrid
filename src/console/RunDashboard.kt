@@ -27,6 +27,7 @@ class RunDashboard(private val context: RunDashboardContext) {
         height: Int = 24,
         status: RunDashboardStatus = RunDashboardStatus.Running,
         controlsEnabled: Boolean = false,
+        discardResults: Boolean = false,
     ): Widget {
         val contentWidth = width.coerceAtLeast(1)
         val completed = context.completedTasks(state)
@@ -178,6 +179,7 @@ class RunDashboard(private val context: RunDashboardContext) {
                         RunPhase.Running -> if (state.completedSamples.toLong() == context.totalSamples)
                             "Finalising run" else "Waiting for tasks"
                     } else if (status == RunDashboardStatus.Quitting) "Stopping active tasks and finalising run metadata"
+                    else if (discardResults && status == RunDashboardStatus.Cancelled) "Run output will be discarded"
                     else "$completed/${context.totalTasks} tasks · ${state.completedSamples}/${context.totalSamples} samples saved"
                     cell(line(badge + "  " + gray(detail)))
                 }

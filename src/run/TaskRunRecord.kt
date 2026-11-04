@@ -14,7 +14,7 @@ data class TaskRunRecord(
     val taskPrompt: String,
     val turns: List<Turn>,
     val finalResult: EvaluationResult,
-    /** Captured in memory with the sample, persisted in its own trajectory.json. */
+    /** Captured in memory with the sample, persisted in its own trajectory.jsonl. */
     val trajectory: List<AgentTrajectoryEvent> = emptyList(),
     val workspace: WorkspaceRecord? = null,
 ) {

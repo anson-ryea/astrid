@@ -270,7 +270,7 @@ class BenchmarkRunnerTest {
                 val record = Json.parseToJsonElement(Files.readString(directory.resolve("record.json"))).jsonObject
                 assertEquals(if (task == tasks.first()) "infrastructure_failure" else "accepted",
                     record.getValue("final_result").jsonObject.getValue("kind").jsonPrimitive.content)
-                assertTrue(Files.isRegularFile(directory.resolve("trajectory.json")))
+                assertTrue(Files.isRegularFile(directory.resolve("trajectory.jsonl")))
             }
         }
     }

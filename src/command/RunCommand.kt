@@ -25,6 +25,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.time.TimeSource
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import model.OpenRouterConnection
 import prompt.PromptRenderer
@@ -116,6 +117,7 @@ class RunCommand(
             "run directory already exists: $runDirectory"
         }
 
+        val store = FileRunStore(runDirectory)
         val console = RunConsole(terminal, RunDashboardContext(
             runId = runId,
             modelId = specification.model.id,
@@ -164,13 +166,21 @@ class RunCommand(
                         repository = repository,
                         selector = selector,
                         engine = engine,
-                        store = FileRunStore(runDirectory),
+                        store = store,
                         packageVerifier = verifier,
                         onEvent = onEvent,
                     ).run()
                 }
             }
         } catch (stopped: RunQuitException) {
+            if (stopped.discardResults) {
+                // RunConsole has joined execution and restored the terminal before this point.
+                val discarded = withContext(NonCancellable) { store.discard() }
+                stopped.suppressed.firstOrNull()?.let { throw it }
+                console.printMessage(if (discarded) "Benchmark stopped. Run output discarded: $runDirectory"
+                    else "Benchmark stopped before the run folder was created.", green)
+                return
+            }
             // Persistence or terminal cleanup failures must still be reported.
             stopped.suppressed.firstOrNull()?.let { throw it }
             console.printMessage(if (Files.isDirectory(runDirectory))

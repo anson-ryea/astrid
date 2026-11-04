@@ -79,6 +79,7 @@ class RunConsole(
         KotlinLogging.logger("astrid.console")
         val logs = RunLogs()
         val quitting = MutableStateFlow(false)
+        val discarding = MutableStateFlow(false)
         val page = MutableStateFlow(RunConsolePage.Dashboard)
         val events = RunEventProcessor(this, onEventProcessed = { event ->
             event.logEntry()?.let { entry ->
@@ -95,7 +96,7 @@ class RunConsole(
                 RunConsolePage.Logs -> logs.render(output.size.width, output.size.height, controls, visibleStatus)
                 RunConsolePage.Info -> info.render(output.size.width, output.size.height, controls, visibleStatus)
                 RunConsolePage.Dashboard -> dashboard.render(events.state.value, startedAt.elapsedNow(), output.size.width,
-                    output.size.height, visibleStatus, controlsEnabled = controls)
+                    output.size.height, visibleStatus, controlsEnabled = controls, discardResults = discarding.value)
             }
         }
         val paintMutex = Mutex()
@@ -124,13 +125,17 @@ class RunConsole(
                             val key = withContext(Dispatchers.IO) { input.readKeyOrNull(100.milliseconds) }
                             when {
                                 key == null -> delay(10.milliseconds)
-                                key.isCtrlC || (key.key == "q" && !key.ctrl && !key.alt) -> {
+                                key.isCtrlC || (key.key in listOf("q", "Q") && !key.ctrl && !key.alt) -> {
                                     if (quitting.compareAndSet(false, true)) {
-                                        logs.append(RunLogEntry("QUITTING: Stopping active tasks and finalising run metadata"))
+                                        val discard = !key.isCtrlC && (key.key == "Q" || key.shift)
+                                        discarding.value = discard
+                                        logs.append(RunLogEntry(if (discard)
+                                            "QUITTING: Stopping active tasks; current run output will be discarded"
+                                        else "QUITTING: Stopping active tasks and finalising run metadata"))
                                         // Acknowledge before cancellation, then keep painting during worker cleanup.
                                         try { paint(RunDashboardStatus.Running) } finally {
                                             execution.cancel(if (key.isCtrlC) CancellationException("Run interrupted")
-                                                else RunQuitException())
+                                                else RunQuitException(discardResults = discard))
                                         }
                                     }
                                 }
@@ -185,7 +190,8 @@ class RunConsole(
                 cleanup { painter?.cancelAndJoin() }
                 cleanup {
                     if (live) logs.append(RunLogEntry(
-                        "${status.name.uppercase()}: ${events.state.value.completedSamples} samples saved",
+                        "${status.name.uppercase()}: " + if (discarding.value) "Run output will be discarded"
+                            else "${events.state.value.completedSamples} samples saved",
                         when (status) {
                             RunDashboardStatus.Complete -> TextColors.green
                             RunDashboardStatus.Failed -> TextColors.red

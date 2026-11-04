@@ -294,8 +294,10 @@ class RunConsoleTest {
     }
 
     @Test
-    fun quitAndCtrlCShowQuittingOnEveryPageUntilCleanupFinishes() = runBlocking {
-        for (page in RunConsolePage.entries) for (key in listOf(KeyboardEvent("q"), KeyboardEvent("c", ctrl = true))) {
+    fun quitKeysShowQuittingOnEveryPageUntilCleanupFinishes() = runBlocking {
+        for (page in RunConsolePage.entries) for (key in listOf(
+            KeyboardEvent("q"), KeyboardEvent("c", ctrl = true), KeyboardEvent("Q"), KeyboardEvent("q", shift = true),
+        )) {
             val recorder = TerminalRecorder(width = 120)
             val input = KeyboardTerminal(recorder)
             val clock = TestTimeSource()
@@ -338,6 +340,9 @@ class RunConsoleTest {
                 finishCleanup.complete(Unit)
                 val result = withTimeout(3.seconds) { running.await() }
                 assertTrue(result.exceptionOrNull() is CancellationException)
+                if (key.key.equals("q", ignoreCase = true)) {
+                    assertEquals(key.key == "Q" || key.shift, (result.exceptionOrNull() as RunQuitException).discardResults)
+                }
                 assertContains(screen(), "CANCELLED")
                 assertFalse(screen().contains("Quitting… waiting for cleanup"))
                 if (page != RunConsolePage.Logs) assertFalse(screen().contains("QUITTING"))
@@ -382,9 +387,9 @@ class RunConsoleTest {
     }
 
     @Test
-    fun quitFromEveryPageStopsActiveWorkAndPreservesSavedResults() = runBlocking {
-        for (page in RunConsolePage.entries) {
-            val root = Files.createDirectory(temporaryDirectory.resolve(page.name))
+    fun quitFromEveryPageStopsWorkersBeforeKeepingOrDiscardingResults() = runBlocking {
+        for (page in RunConsolePage.entries) for (discard in listOf(false, true)) {
+            val root = Files.createDirectory(temporaryDirectory.resolve("${page.name}-$discard"))
             val task = createRunTask(root)
             val runDirectory = root.resolve("run")
             val sampleDirectory = runDirectory.resolve("tasks/${task.manifest.taskId}/samples/001")
@@ -398,10 +403,10 @@ class RunConsoleTest {
                     reply, ai.koog.prompt.message.ResponseMetaInfo.Empty,
                 ) else {
                     savedRecord = Files.readString(sampleDirectory.resolve("record.json"))
-                    savedTrajectory = Files.readString(sampleDirectory.resolve("trajectory.json"))
+                    savedTrajectory = Files.readString(sampleDirectory.resolve("trajectory.jsonl"))
                     if (page == RunConsolePage.Logs) input.keys.put(KeyboardEvent("l"))
                     if (page == RunConsolePage.Info) input.keys.put(KeyboardEvent("i"))
-                    input.keys.put(KeyboardEvent("q"))
+                    input.keys.put(KeyboardEvent(if (discard) "Q" else "q"))
                     try { awaitCancellation() } finally { stopped.set(true) }
                 }
             }
@@ -413,18 +418,20 @@ class RunConsoleTest {
                 taskSubmissions = mapOf(task.manifest.taskId to task.manifest.submission.kind), samplesPerTask = 3,
             )
             val engine = createRunEngine(root, executor, runTestSpecification(samplesPerTask = 3, maxConcurrentTasks = 1))
+            val store = FileRunStore(runDirectory)
             withTimeout(10.seconds) {
-                assertFailsWith<RunQuitException> {
+                val failure = assertFailsWith<RunQuitException> {
                     RunConsole(Terminal(terminalInterface = input), metadata).run { onEvent ->
                         BenchmarkRunner(repository, TaskSelector(setOf(EvaluationKind("test_evaluation"))),
-                            engine, FileRunStore(runDirectory), onEvent = onEvent).run()
+                            engine, store, onEvent = onEvent).run()
                     }
                 }
+                assertEquals(discard, failure.discardResults)
             }
             assertTrue(stopped.get())
             assertEquals(2, executor.prompts.size)
             assertEquals(savedRecord, Files.readString(sampleDirectory.resolve("record.json")))
-            assertEquals(savedTrajectory, Files.readString(sampleDirectory.resolve("trajectory.json")))
+            assertEquals(savedTrajectory, Files.readString(sampleDirectory.resolve("trajectory.jsonl")))
             assertFalse(Files.exists(sampleDirectory.resolveSibling("002/record.json")))
             assertFalse(Files.exists(sampleDirectory.resolveSibling("003/record.json")))
             val manifest = Json.parseToJsonElement(Files.readString(runDirectory.resolve("run.json"))).jsonObject
@@ -434,12 +441,16 @@ class RunConsoleTest {
             val screen = TerminalScreen(120, 24).also { it.write(recorder.output()) }.lines.joinToString("\n")
             assertContains(screen, "CANCELLED")
             when (page) {
-                RunConsolePage.Logs -> assertContains(screen, "1 samples saved")
+                RunConsolePage.Logs -> assertContains(screen, if (discard) "Run output will be discarded" else "1 samples saved")
                 RunConsolePage.Dashboard -> assertContains(screen, "1 success")
                 RunConsolePage.Info -> assertContains(screen, "info")
             }
             assertFalse(screen.contains("COMPLETE"))
             assertTrue(recorder.output().endsWith("\u001b[?25h"))
+            if (discard) {
+                assertTrue(store.discard())
+                assertFalse(Files.exists(runDirectory))
+            } else assertTrue(Files.exists(runDirectory))
         }
     }
 

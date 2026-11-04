@@ -2,10 +2,16 @@ package run
 
 import domain.EvaluationResult
 import domain.TaskId
+import java.io.BufferedWriter
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
+import java.nio.file.FileVisitResult
+import java.nio.file.LinkOption.NOFOLLOW_LINKS
+import java.nio.file.SimpleFileVisitor
+import java.nio.file.attribute.BasicFileAttributes
+import java.io.IOException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -27,6 +33,8 @@ class FileRunStore(runDirectory: Path) : RunStore {
     private var selectedTaskIds: List<TaskId> = emptyList()
     private val savedSamples = mutableSetOf<Pair<TaskId, Int>>()
     private var finished = false
+    private var createdDirectory = false
+    private var directoryKey: Any? = null
 
     override suspend fun begin(
         specification: BenchmarkRunSpecification,
@@ -47,6 +55,8 @@ class FileRunStore(runDirectory: Path) : RunStore {
         // createDirectory fails if the run ID has already been used.
         withContext(Dispatchers.IO) {
             Files.createDirectory(runDirectory)
+            createdDirectory = true
+            directoryKey = Files.readAttributes(runDirectory, BasicFileAttributes::class.java, NOFOLLOW_LINKS).fileKey()
         }
         writeAtomically(
             target = runDirectory.resolve("run.json"),
@@ -96,7 +106,7 @@ class FileRunStore(runDirectory: Path) : RunStore {
         withContext(Dispatchers.IO) {
             Files.createDirectories(sampleDirectory)
             val recordFile = sampleDirectory.resolve("record.json")
-            val trajectoryFile = sampleDirectory.resolve("trajectory.json")
+            val trajectoryFile = sampleDirectory.resolve("trajectory.jsonl")
             // Check all destinations before writing any artefacts.
             val destinations = listOf(recordFile, trajectoryFile) +
                 if (record.workspace != null) listOf(outputDirectory) else emptyList()
@@ -110,11 +120,7 @@ class FileRunStore(runDirectory: Path) : RunStore {
                     writeAtomically(target, content, replace = false)
                 }
             }
-            writeAtomically(
-                target = trajectoryFile,
-                value = trajectoryJson(record),
-                replace = false,
-            )
+            writeTrajectoryAtomically(trajectoryFile, record)
             // Publish the sample summary only after its outputs and trace exist.
             writeAtomically(
                 target = recordFile,
@@ -158,6 +164,31 @@ class FileRunStore(runDirectory: Path) : RunStore {
             replace = true,
         )
         finished = true
+    }
+
+    /** Discards only the folder created by this store. Call after all run workers have stopped. */
+    internal suspend fun discard(): Boolean = withContext(Dispatchers.IO) {
+        if (!createdDirectory) return@withContext false
+        check(!Files.isSymbolicLink(runDirectory.parent)) { "run directory parent was replaced by a symbolic link" }
+        val attributes = Files.readAttributes(runDirectory, BasicFileAttributes::class.java, NOFOLLOW_LINKS)
+        check(attributes.isDirectory && (directoryKey == null || attributes.fileKey() == directoryKey)) {
+            "run directory was replaced; refusing to discard unrelated output: $runDirectory"
+        }
+        // walkFileTree does not follow symbolic links, including links inside a saved workspace.
+        Files.walkFileTree(runDirectory, object : SimpleFileVisitor<Path>() {
+            override fun visitFile(file: Path, attributes: BasicFileAttributes): FileVisitResult {
+                Files.delete(file)
+                return FileVisitResult.CONTINUE
+            }
+
+            override fun postVisitDirectory(directory: Path, failure: IOException?): FileVisitResult {
+                if (failure != null) throw failure
+                Files.delete(directory)
+                return FileVisitResult.CONTINUE
+            }
+        })
+        createdDirectory = false
+        true
     }
 
     private fun runJson(
@@ -206,7 +237,7 @@ class FileRunStore(runDirectory: Path) : RunStore {
             put("task_prompt", JsonPrimitive(record.taskPrompt))
             put("turns", JsonArray(record.turns.map(::turnJson)))
             put("final_result", resultJson(record.finalResult))
-            put("trajectory_file", JsonPrimitive("trajectory.json"))
+            put("trajectory_file", JsonPrimitive("trajectory.jsonl"))
             record.workspace?.let { workspace ->
                 put("workspace", buildJsonObject {
                     put("context_id", JsonPrimitive(workspace.contextId))
@@ -218,21 +249,17 @@ class FileRunStore(runDirectory: Path) : RunStore {
             }
         }
 
-    private fun trajectoryJson(record: TaskRunRecord): JsonObject = buildJsonObject {
-        put("schema_version", JsonPrimitive(1))
-        put("task_id", JsonPrimitive(record.taskId.value))
-        put("sample_index", JsonPrimitive(record.sampleIndex))
-        put("events", JsonArray(record.trajectory.map(::trajectoryEventJson)))
-    }
-
     private fun workspaceFileJson(file: WorkspaceFile): JsonObject = buildJsonObject {
         put("path", JsonPrimitive(file.path))
         put("sha256", JsonPrimitive(file.sha256))
         put("content", JsonPrimitive(file.content))
     }
 
-    private fun trajectoryEventJson(event: AgentTrajectoryEvent): JsonObject =
+    private fun trajectoryEventJson(record: TaskRunRecord, event: AgentTrajectoryEvent): JsonObject =
         buildJsonObject {
+            put("schema_version", JsonPrimitive(1))
+            put("task_id", JsonPrimitive(record.taskId.value))
+            put("sample_index", JsonPrimitive(record.sampleIndex))
             put("kind", JsonPrimitive(event.kind))
             put("timestamp_epoch_ms", JsonPrimitive(event.timestampEpochMillis))
             put("details", event.details)
@@ -291,6 +318,14 @@ class FileRunStore(runDirectory: Path) : RunStore {
             }
         }
 
+    private fun writeTrajectoryAtomically(target: Path, record: TaskRunRecord) =
+        writeAtomically(target, replace = false) { writer ->
+            for (event in record.trajectory) {
+                writer.write(Json.encodeToString(JsonObject.serializer(), trajectoryEventJson(record, event)))
+                writer.write("\n")
+            }
+        }
+
     private fun writeAtomically(
         target: Path,
         value: JsonElement,
@@ -305,6 +340,12 @@ class FileRunStore(runDirectory: Path) : RunStore {
         target: Path,
         value: String,
         replace: Boolean,
+    ) = writeAtomically(target, replace) { it.write(value) }
+
+    private fun writeAtomically(
+        target: Path,
+        replace: Boolean,
+        write: (BufferedWriter) -> Unit,
     ) {
         if (!replace) {
             check(Files.notExists(target)) {
@@ -319,7 +360,7 @@ class FileRunStore(runDirectory: Path) : RunStore {
         )
 
         try {
-            Files.writeString(temporary, value, StandardCharsets.UTF_8)
+            Files.newBufferedWriter(temporary, StandardCharsets.UTF_8).use(write)
 
             if (replace) {
                 Files.move(
