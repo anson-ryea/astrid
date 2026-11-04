@@ -11,7 +11,6 @@ import ai.koog.prompt.executor.model.PromptExecutor
 import ai.koog.prompt.message.MessagePart
 import ai.koog.prompt.params.LLMParams
 import ai.koog.utils.io.use
-import dataset.TaskPackageVerifier
 import domain.BenchmarkTask
 import domain.EvaluationResult
 import domain.EvaluationReport
@@ -35,7 +34,6 @@ class TaskRunEngine(
     private val systemPromptRenderer: PromptRenderer,
     private val repairPromptRenderer: PromptRenderer,
     private val toolRegistry: ToolRegistry = ToolRegistry.EMPTY,
-    private val packageVerifier: TaskPackageVerifier = TaskPackageVerifier(),
     private val workspaceFactory: TaskWorkspaceFactory? = null,
 ) {
     init {
@@ -61,13 +59,7 @@ class TaskRunEngine(
 
         // Preparation failures are run errors, not model samples.
         onEvent(RunEvent.PhaseChanged(task.manifest.taskId, sampleIndex, SamplePhase.Preparing))
-        packageVerifier.verify(task)
-        evaluators.findFor(task).validateTask(task)
         val session = workspaceFactory?.prepare(task)?.create()
-        try { session?.validateEvaluation() } catch (failure: Throwable) {
-            session?.close()
-            throw failure
-        }
         session.use { session ->
             val record = runPrepared(task, sampleIndex, session, onEvent)
             // The orchestrator durably saves the record while the workspace still exists.

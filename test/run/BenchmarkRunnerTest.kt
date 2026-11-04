@@ -102,7 +102,7 @@ class BenchmarkRunnerTest {
     }
 
     @Test
-    fun verifiesAllPackagesBeforeStartingTheRun() {
+    fun runsWithoutAnImplicitDatasetValidationPass() {
         runBlocking {
             val valid = createRunTask(temporaryDirectory)
             val changed = createRunTask(
@@ -113,15 +113,14 @@ class BenchmarkRunnerTest {
                 changed.packageDirectory.resolve("Context.txt"),
                 "changed after hashing",
             )
-            val executor = ScriptedPromptExecutor(listOf("unused"))
+            val executor = ScriptedPromptExecutor(listOf("proof", "proof"))
             val store = RecordingRunStore()
 
-            assertFailsWith<IllegalStateException> {
-                runner(listOf(valid, changed), executor, store).run()
-            }
+            runner(listOf(valid, changed), executor, store).run()
 
-            assertTrue(store.events.isEmpty())
-            assertTrue(executor.prompts.isEmpty())
+            assertEquals("complete", store.events.last())
+            assertEquals(2, store.records.size)
+            assertEquals(2, executor.prompts.size)
         }
     }
 

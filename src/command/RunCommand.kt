@@ -1,6 +1,7 @@
 package command
 
 import backend.BackendRegistry
+import backend.BackendDatasetValidator
 import backend.lean.LeanBackend
 import com.github.ajalt.clikt.command.SuspendingCliktCommand
 import com.github.ajalt.clikt.core.Context
@@ -10,6 +11,7 @@ import com.github.ajalt.clikt.parameters.arguments.convert
 import com.github.ajalt.clikt.parameters.arguments.defaultLazy
 import com.github.ajalt.clikt.parameters.options.default
 import com.github.ajalt.clikt.parameters.options.defaultLazy
+import com.github.ajalt.clikt.parameters.options.flag
 import com.github.ajalt.clikt.parameters.options.option
 import com.github.ajalt.clikt.parameters.types.path
 import com.github.ajalt.clikt.parameters.types.choice
@@ -21,7 +23,6 @@ import console.RunDashboardContext
 import console.RunTaskProblem
 import dataset.FileTaskRepository
 import dataset.JsonTaskManifestReader
-import dataset.TaskPackageVerifier
 import io.github.cdimascio.dotenv.dotenv
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
@@ -61,11 +62,11 @@ class RunCommand(
     override fun help(context: Context): String =
         "Run frozen tasks from a dataset checkout with a V1 configuration and optional run name or output path."
 
-    private val configPath by argument(help = "V1 benchmark run configuration")
+    private val configPath by argument("config path", help = "V1 benchmark run configuration")
         .path(mustExist = true, canBeDir = false)
-    private val datasetPath by argument(help = "Dataset checkout directory containing dataset/ and its backend environment")
+    private val datasetPath by argument("dataset path", help = "Dataset checkout directory containing dataset/ and its backend environment")
         .path(mustExist = true, canBeFile = false)
-    private val runIdOrPath by argument("RUN_ID", help = "Run name or output path; defaults to <dataset-folder>_<timestamp>")
+    private val runIdOrPath by argument("run_id/output path", help = "Run name or output path; defaults to <dataset-folder>_<timestamp>")
         .convert { value ->
             require(isRunPath(value) || runIdPattern.matches(value)) {
                 "run ID must use lower-case letters, digits, underscores or hyphens, or be a path"
@@ -75,6 +76,10 @@ class RunCommand(
         .defaultLazy(defaultForHelp = "<dataset-folder>_<timestamp>") { defaultRunId() }
     private val backendId by option("--backend", help = "Formalisation backend")
         .default("lean")
+    private val validateBeforeRun by option(
+        "--validate-before-run",
+        help = "Validate selected dataset packages and backend readiness before model calls",
+    ).flag()
     private val datasetRoot by option(
         "--dataset-root",
         help = "Task directory; defaults to <dataset-path>/dataset",
@@ -121,7 +126,6 @@ class RunCommand(
             "no frozen tasks are available for backend ${backend.id}"
         }
 
-        val verifier = TaskPackageVerifier()
         val workspaceFactory = if (specification.workspaceToolsEnabled) {
             backend.workspaceFactory
         } else null
@@ -162,14 +166,12 @@ class RunCommand(
         try {
             console.run { onEvent ->
                 onEvent(RunEvent.RunPhaseChanged(RunPhase.Preparing))
-                // Preflight can compile Lean or perform blocking filesystem/process I/O.
+                // Optional validation can compile Lean or perform blocking filesystem/process I/O.
                 withContext(Dispatchers.IO) {
                     systemPromptRenderer.render(emptyMap())
                     repairPromptRenderer.render(mapOf("DIAGNOSTIC" to "preflight"))
-                    selected.forEach { task ->
-                        verifier.verify(task)
-                        backend.preflight(task)
-                        workspaceFactory?.prepare(task)
+                    if (validateBeforeRun) {
+                        BackendDatasetValidator(backend, workspaceFactory).validateAll(selected)
                     }
                 }
                 val apiKey = apiKeyProvider()?.takeIf(String::isNotBlank)
@@ -185,7 +187,6 @@ class RunCommand(
                         specification = resolvedSpecification,
                         systemPromptRenderer = systemPromptRenderer,
                         repairPromptRenderer = repairPromptRenderer,
-                        packageVerifier = verifier,
                         workspaceFactory = workspaceFactory,
                     )
                     onEvent(RunEvent.RunPhaseChanged(RunPhase.Running))
@@ -194,7 +195,6 @@ class RunCommand(
                         selector = selector,
                         engine = engine,
                         store = store,
-                        packageVerifier = verifier,
                         onEvent = onEvent,
                     ).run()
                 }

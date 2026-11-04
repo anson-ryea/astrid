@@ -252,7 +252,7 @@ class RunCommandTest {
 
         for (environmentOverride in listOf<Path?>(null, external)) {
             val command = RunCommand(temporaryDirectory, apiKeyProvider = { error("API key must not be read") })
-            val arguments = listOf(writeConfig(config).toString(), checkout.toString(), "test-run", "--ui=plain") +
+            val arguments = listOf(writeConfig(config).toString(), checkout.toString(), "test-run", "--ui=plain", "--validate-before-run") +
                 (environmentOverride?.let { listOf("--environment-root", it.toString()) } ?: emptyList())
 
             val failure = assertFailsWith<IllegalArgumentException> { command.parse(arguments) }
@@ -276,7 +276,7 @@ class RunCommandTest {
             Files.createDirectories(contract.parent)
             Files.writeString(contract, "{}")
             val command = RunCommand(temporaryDirectory, apiKeyProvider = { error("API key must not be read") })
-            val arguments = listOf(writeConfig(validConfig).toString(), checkout.toString(), "test-run", "--ui=plain") +
+            val arguments = listOf(writeConfig(validConfig).toString(), checkout.toString(), "test-run", "--ui=plain", "--validate-before-run") +
                 if (useOverride) listOf("--evaluation-root", evaluation.toString()) else emptyList()
 
             val failure = assertFailsWith<IllegalArgumentException> { command.parse(arguments) }
@@ -285,6 +285,32 @@ class RunCommandTest {
             // Its hash fails before any native Lean process can start.
             assertContains(failure.message.orEmpty(), "evaluation contract hash mismatch")
             assertFalse(Files.exists(temporaryDirectory.resolve("runs")))
+        }
+    }
+
+    @Test
+    fun skipsDatasetValidationUnlessRequested() = runBlocking {
+        copyDirectory(SimpleTestDataset.projectRoot.resolve("prompts"), temporaryDirectory.resolve("prompts"))
+        for (result in listOf("proof", "definition")) {
+            val checkout = copyCheckout(temporaryDirectory.resolve("corpus-$result"), result)
+            val source = SimpleTestDataset.task(result)
+            val evidence = checkout.resolve("dataset/paper_1/tasks/${source.manifest.taskId}/evidence.md")
+            Files.writeString(evidence, "changed after hashing")
+            for (validate in listOf(false, true)) {
+                var apiKeyRead = false
+                val command = RunCommand(temporaryDirectory, apiKeyProvider = {
+                    apiKeyRead = true
+                    error("reached model setup")
+                })
+                val arguments = listOf(writeConfig(validConfig).toString(), checkout.toString(), "test-run", "--ui=plain") +
+                    if (validate) listOf("--validate-before-run") else emptyList()
+
+                val failure = assertFailsWith<IllegalStateException> { command.parse(arguments) }
+
+                assertEquals(!validate, apiKeyRead)
+                assertContains(failure.message.orEmpty(), if (validate) "task artefact hash mismatch" else "reached model setup")
+                assertFalse(Files.exists(temporaryDirectory.resolve("runs")))
+            }
         }
     }
 

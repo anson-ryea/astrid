@@ -1,6 +1,5 @@
 package run
 
-import dataset.TaskPackageVerifier
 import dataset.TaskRepository
 import domain.BenchmarkTask
 import kotlinx.coroutines.Dispatchers
@@ -23,7 +22,6 @@ class BenchmarkRunner(
     private val selector: TaskSelector,
     private val engine: TaskRunEngine,
     private val store: RunStore,
-    private val packageVerifier: TaskPackageVerifier = TaskPackageVerifier(),
     private val onEvent: suspend (RunEvent) -> Unit = {},
 ) {
     suspend fun run() {
@@ -31,9 +29,6 @@ class BenchmarkRunner(
         check(tasks.isNotEmpty()) {
             "no frozen tasks match the selected evaluation kinds"
         }
-
-        // Fail before any model calls if a selected package is invalid.
-        tasks.forEach(packageVerifier::verify)
 
         store.begin(
             specification = engine.specification,

@@ -37,6 +37,7 @@ class BackendIndependentWorkspaceTest {
                     override val workspace = TaskWorkspace(root, emptyList(), "context", "closure",
                         WorkspaceSpecification(mapOf("Answer.txt" to "initial"), Regex("scratch/.+\\.txt")))
                     override val submissionInstructions = "Write your answer to /workspace/Answer.txt."
+                    override fun validateEvaluation() = error("dataset validation must be explicitly requested")
                     override fun assess(): Pair<String?, EvaluationResult> {
                         val submission = workspace.read("Answer.txt")
                         return submission to if (submission == "file answer") EvaluationResult.Accepted
