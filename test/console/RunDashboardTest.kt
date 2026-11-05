@@ -186,9 +186,9 @@ class RunDashboardTest {
         val taskRow = rows.indexOfFirst { row -> row.any { it.text == proof.value } }
         assertTrue(taskRow >= 0)
         assertEquals(listOf(TextColors.green.color, TextColors.blue.color),
-            rows[taskRow].filter { it.text == "◢" }.map { it.style.color })
+            rows[taskRow].filter { it.text == "◐" }.map { it.style.color })
         assertEquals(listOf(TextColors.gray.color, TextColors.green.color, TextColors.blue.color, TextColors.yellow.color),
-            rows[taskRow + 1].filter { it.text == "◤" }.map { it.style.color })
+            rows[taskRow + 1].filter { it.text == "◒" }.map { it.style.color })
     }
 
     @Test

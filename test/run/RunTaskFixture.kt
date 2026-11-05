@@ -1,6 +1,7 @@
 package run
 
 import ai.koog.prompt.executor.model.PromptExecutor
+import ai.koog.agents.core.tools.ToolRegistry
 import ai.koog.prompt.llm.LLMProvider
 import ai.koog.prompt.llm.LLModel
 import dataset.HashCalculator
@@ -103,6 +104,8 @@ internal fun createRunEngine(
     },
     workspaceFactory: TaskWorkspaceFactory? = null,
     detailedAssessment: ((BenchmarkTask, String) -> domain.EvaluationReport)? = null,
+    langfuse: LangfuseTracing? = null,
+    toolRegistry: ToolRegistry = ToolRegistry.EMPTY,
 ): TaskRunEngine {
     val promptDirectory = root.resolve("prompts")
     Files.createDirectories(promptDirectory)
@@ -140,5 +143,7 @@ internal fun createRunEngine(
         systemPromptRenderer = PromptRenderer(promptDirectory.resolve("system.md")),
         repairPromptRenderer = PromptRenderer(promptDirectory.resolve("repair.md")),
         workspaceFactory = workspaceFactory,
+        langfuse = langfuse,
+        toolRegistry = toolRegistry,
     )
 }

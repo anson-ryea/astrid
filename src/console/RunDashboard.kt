@@ -168,7 +168,7 @@ class RunDashboard(private val context: RunDashboardContext) {
                             listOf("preparing", "generating", "evaluating", "repairing")
                         else listOf("prep", "gen", "eval", "repair")
                         val legend = SamplePhase.entries.zip(labels).joinToString("  ") { (phase, label) ->
-                            phaseColour(phase)("◤") + gray(" $label")
+                            phaseColour(phase)("◒") + gray(" $label")
                         }
                         cell(line(legend))
                     }
@@ -206,7 +206,7 @@ class RunDashboard(private val context: RunDashboardContext) {
     private fun taskList(active: List<Map.Entry<SampleKey, SamplePhase>>, width: Int, tick: Int): Widget {
         fun task(phase: SamplePhase, id: String, suffix: String = ""): Widget = horizontalLayout {
             spacing = 0
-            cell(Spinner("◢◣◤◥", style = phaseColour(phase), initial = tick))
+            cell(Spinner("◐◓◑◒", style = phaseColour(phase), initial = tick))
             cell(" $id")
             if (suffix.isNotEmpty()) cell(gray(suffix))
         }
@@ -215,7 +215,7 @@ class RunDashboard(private val context: RunDashboardContext) {
         val tokens = mutableListOf<Widget>()
         for ((sample, phase) in active) {
             val suffix = if (context.samplesPerTask > 1) " (sample ${sample.sampleIndex}/${context.samplesPerTask})" else ""
-            val text = "◤ ${sample.taskId.value}$suffix"
+            val text = "◐ ${sample.taskId.value}$suffix"
             val separator = if (shown == 0) 0 else 3
             val remaining = active.size - shown - 1
             val overflowWidth = if (remaining > 0) "   +$remaining more".length else 0

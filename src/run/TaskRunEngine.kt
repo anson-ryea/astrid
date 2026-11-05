@@ -5,6 +5,7 @@ import ai.koog.agents.core.agent.config.AIAgentConfig
 import ai.koog.agents.core.dsl.builder.node
 import ai.koog.agents.core.dsl.builder.strategy
 import ai.koog.agents.core.tools.ToolRegistry
+import ai.koog.agents.features.opentelemetry.feature.OpenTelemetry
 import ai.koog.agents.features.tracing.feature.Tracing
 import ai.koog.prompt.dsl.prompt
 import ai.koog.prompt.executor.model.PromptExecutor
@@ -35,6 +36,7 @@ class TaskRunEngine(
     private val repairPromptRenderer: PromptRenderer,
     private val toolRegistry: ToolRegistry = ToolRegistry.EMPTY,
     private val workspaceFactory: TaskWorkspaceFactory? = null,
+    private val langfuse: LangfuseTracing? = null,
 ) {
     init {
         require(workspaceFactory == null || specification.workspaceToolsEnabled) {
@@ -215,6 +217,9 @@ class TaskRunEngine(
                 toolRegistry = activeToolRegistry,
             ) {
                 install(Tracing) { addMessageProcessor(trajectory) }
+                langfuse?.let { tracing ->
+                    install(OpenTelemetry) { tracing.configure(this, task, sampleIndex, specification.model.id) }
+                }
             }.use { agent -> agent.run(taskPrompt) }
 
             turns.last().result

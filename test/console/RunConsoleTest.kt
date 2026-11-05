@@ -113,9 +113,9 @@ class RunConsoleTest {
                 while (!recorder.output().contains("00:00:02")) delay(10.milliseconds)
             }
             assertContains(recorder.output(), "GENERATING")
-            assertContains(recorder.output(), "◢")
+            assertContains(recorder.output(), "◐")
             // The task state stays unchanged while Mordant redraws successive spinner frames.
-            for (frame in listOf("◣", "◤", "◥")) {
+            for (frame in listOf("◓", "◑", "◒")) {
                 clock += 250.milliseconds
                 withTimeout(3.seconds) {
                     while (!recorder.output().contains(frame)) delay(10.milliseconds)

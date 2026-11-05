@@ -43,6 +43,8 @@ import run.TaskRunEngine
 import run.TaskSelector
 import run.RunEvent
 import run.RunPhase
+import run.LangfuseConfig
+import run.LangfuseTracing
 
 /** Runs reviewed tasks using a registered backend and configured OpenRouter model. */
 class RunCommand(
@@ -56,6 +58,13 @@ class RunCommand(
     },
     private val configReader: JsonBenchmarkRunConfigReader = JsonBenchmarkRunConfigReader(),
     private val clock: Clock = Clock.systemDefaultZone(),
+    private val langfuseConfigProvider: () -> LangfuseConfig? = {
+        val local = dotenv {
+            directory = projectRoot.toString()
+            ignoreIfMissing = true
+        }
+        LangfuseConfig.fromEnvironment { System.getenv(it) ?: local[it] }
+    },
 ) : SuspendingCliktCommand("run") {
     private val projectRoot = projectRoot.toAbsolutePath().normalize()
 
@@ -176,6 +185,9 @@ class RunCommand(
                 }
                 val apiKey = apiKeyProvider()?.takeIf(String::isNotBlank)
                     ?: error("OPENROUTER_API_KEY is missing")
+                val langfuse = langfuseConfigProvider()?.let {
+                    LangfuseTracing(it, runId, datasetPath.toAbsolutePath().normalize().fileName.toString(), backend.id)
+                }
                 onEvent(RunEvent.RunPhaseChanged(RunPhase.ResolvingModel))
                 OpenRouterConnection(apiKey).use { connection ->
                     val resolvedSpecification = specification.copy(model = connection.resolveModel(specification.model))
@@ -188,6 +200,7 @@ class RunCommand(
                         systemPromptRenderer = systemPromptRenderer,
                         repairPromptRenderer = repairPromptRenderer,
                         workspaceFactory = workspaceFactory,
+                        langfuse = langfuse,
                     )
                     onEvent(RunEvent.RunPhaseChanged(RunPhase.Running))
                     BenchmarkRunner(
