@@ -5,8 +5,9 @@ import analysis.RunAnalysis
 import analysis.SampleCategory
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.jsonPrimitive
+import text.formatDecimal
+import text.formatPercentage
 import text.singleLine
-import java.util.*
 
 internal object TextAnalysisRenderer {
     fun render(analyses: List<RunAnalysis>): String = buildString {
@@ -19,21 +20,33 @@ internal object TextAnalysisRenderer {
             appendLine("Run: ${singleLine(run.directory.toString())}")
             appendLine("Model: ${singleLine(run.modelId)} | status: ${run.status}")
             appendLine("Samples: ${total.savedSamples}/${total.expectedSamples} saved; ${total.missingSamples} missing | tasks: ${total.completeTasks}/${total.taskCount} fully saved")
-            appendLine("First attempt: ${total.firstAttemptAccepted}/${total.savedSamples} accepted (${percent(total.firstAttemptRate)}); ${total.firstAttemptAssessed} assessed")
-            appendLine("Final: ${total.finalAccepted}/${total.savedSamples} accepted (${percent(total.finalRate)}); ${total.repairedAccepted} accepted after repairs")
+            appendLine(
+                "First attempt: ${total.firstAttemptAccepted}/${total.savedSamples} accepted (${
+                    formatPercentage(
+                        total.firstAttemptRate
+                    )
+                }); ${total.firstAttemptAssessed} assessed"
+            )
+            appendLine("Final: ${total.finalAccepted}/${total.savedSamples} accepted (${formatPercentage(total.finalRate)}); ${total.repairedAccepted} accepted after repairs")
             appendLine(
                 "Recorded repair turns: ${total.recordedRepairTurns}; ${total.samplesWithRecordedRepairs} samples repaired; mean ${
-                    number(
+                    formatDecimal(
                         total.meanRecordedRepairTurns
                     )
                 } per saved sample"
             )
-            appendLine("Task macro final acceptance: ${percent(total.taskMacroFinalRate)} | paper macro: ${percent(total.paperMacroFinalRate)}")
+            appendLine(
+                "Task macro final acceptance: ${formatPercentage(total.taskMacroFinalRate)} | paper macro: ${
+                    formatPercentage(
+                        total.paperMacroFinalRate
+                    )
+                }"
+            )
             appendLine("Outcomes: " + total.counts.entries.joinToString(", ") { "${it.key.value}=${it.value}" })
             appendLine("Budget limits: " + total.budgets.entries.joinToString(", ") { "${it.key}=${it.value}" })
             for ((k, eligibleTasks, firstAttempt, final) in total.passAtK) appendLine(
-                "pass@$k: first=${percent(firstAttempt)}, final=${
-                    percent(
+                "pass@$k: first=${formatPercentage(firstAttempt)}, final=${
+                    formatPercentage(
                         final
                     )
                 } ($eligibleTasks/${total.taskCount} eligible tasks)"
@@ -62,7 +75,7 @@ internal object TextAnalysisRenderer {
                     .entries.joinToString(", ") { "${it.key.value}=${it.value}" }
                 appendLine(
                     "  ${s.dimension} ${singleLine(s.label)}: first=${s.firstAttemptAccepted}/${s.savedSamples}, final=${s.finalAccepted}/${s.savedSamples} (${
-                        percent(
+                        formatPercentage(
                             s.finalRate
                         )
                     }), missing=${s.missingSamples}" +
@@ -72,6 +85,4 @@ internal object TextAnalysisRenderer {
         }
     }
 
-    private fun percent(value: Double?): String = value?.let { String.format(Locale.ROOT, "%.2f%%", it * 100) } ?: "n/a"
-    private fun number(value: Double?): String = value?.let { String.format(Locale.ROOT, "%.2f", it) } ?: "n/a"
 }

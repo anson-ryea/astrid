@@ -5,6 +5,7 @@ import analysis.RunAnalyser
 import analysis.SavedRunReader
 import com.github.ajalt.clikt.command.SuspendingCliktCommand
 import com.github.ajalt.clikt.core.Context
+import com.github.ajalt.clikt.core.terminal
 import com.github.ajalt.clikt.parameters.arguments.argument
 import com.github.ajalt.clikt.parameters.arguments.multiple
 import com.github.ajalt.clikt.parameters.options.default
@@ -14,6 +15,7 @@ import com.github.ajalt.clikt.parameters.types.choice
 import com.github.ajalt.clikt.parameters.types.int
 import com.github.ajalt.clikt.parameters.types.path
 import com.github.ajalt.clikt.parameters.types.restrictTo
+import console.AnalysisReport
 import dataset.FileTaskRepository
 import dataset.JsonTaskManifestReader
 import kotlinx.coroutines.Dispatchers
@@ -44,7 +46,7 @@ class AnalyseCommand : SuspendingCliktCommand("analyse") {
         .path(mustExist = true, canBeFile = false)
 
     override suspend fun run() {
-        val report = withContext(Dispatchers.IO) {
+        val analyses = withContext(Dispatchers.IO) {
             val labels = datasetRoot?.let { root ->
                 FileTaskRepository(root, JsonTaskManifestReader()).findAll()
                     .associate { it.manifest.taskId.value to RunTaskMetadata.from(it.manifest) }
@@ -53,14 +55,18 @@ class AnalyseCommand : SuspendingCliktCommand("analyse") {
             val analyser = RunAnalyser()
             val paths = runPaths.map { it.toRealPath() }
             require(paths.distinct().size == paths.size) { "run paths must be distinct" }
-            val analyses = paths.map { analyser.analyse(reader.read(it, labels), ks) }
-            when (format) {
-                "json" -> AnalysisRenderer.json(analyses)
-                "csv" -> AnalysisRenderer.csv(analyses)
-                else -> AnalysisRenderer.text(analyses)
-            }
+            paths.map { analyser.analyse(reader.read(it, labels), ks) }
         }
         val destination = output
+        if (format == "text" && destination == null) {
+            terminal.println(AnalysisReport.render(analyses, terminal.size.width))
+            return
+        }
+        val report = when (format) {
+            "json" -> AnalysisRenderer.json(analyses)
+            "csv" -> AnalysisRenderer.csv(analyses)
+            else -> AnalysisRenderer.text(analyses)
+        }
         if (destination == null) echo(report, trailingNewline = false)
         else withContext(Dispatchers.IO) { Files.writeString(destination, report, CREATE_NEW, WRITE) }
     }

@@ -1,17 +1,16 @@
 package console
 
-import com.github.ajalt.mordant.rendering.*
+import com.github.ajalt.mordant.rendering.Lines
 import com.github.ajalt.mordant.rendering.TextColors.*
-import com.github.ajalt.mordant.rendering.TextStyles.Companion.hyperlink
 import com.github.ajalt.mordant.rendering.TextStyles.bold
-import com.github.ajalt.mordant.rendering.TextStyles.underline
+import com.github.ajalt.mordant.rendering.Widget
+import com.github.ajalt.mordant.rendering.WidthRange
 import com.github.ajalt.mordant.table.verticalLayout
 import com.github.ajalt.mordant.terminal.Terminal
 import com.github.ajalt.mordant.widgets.HorizontalRule
 import com.github.ajalt.mordant.widgets.Text
 import com.github.ajalt.mordant.widgets.Viewport
 import text.singleLine
-import java.nio.file.Path
 import java.util.concurrent.atomic.AtomicInteger
 
 /** Run metadata only: never reads task artefacts or private evaluation material. */
@@ -65,31 +64,7 @@ internal class RunInfo(private val context: RunDashboardContext) {
         }, width = columns, height = rows)
     }
 
-    private fun details(width: Int, status: RunDashboardStatus): Widget = verticalLayout {
-        spacing = 0
-        fun text(value: String) = Text(value, whitespace = Whitespace.PRE_WRAP, overflowWrap = OverflowWrap.BREAK_WORD)
-        fun section(title: String, gap: Boolean = true) {
-            if (gap) cell("")
-            cell(text((bold + underline)(title)))
-        }
-
-        fun value(label: String, value: String) {
-            val key = gray(if (width >= 60) label.padEnd(22) else label)
-            cell(text("  $key  $value"))
-        }
-
-        fun path(label: String, path: Path?) {
-            value(
-                label, if (path == null) gray("not supplied") else {
-                    val absolute = path.toAbsolutePath().normalize()
-                    (green + underline + hyperlink(absolute.toUri().toASCIIString()))(singleLine(absolute.toString()))
-                }
-            )
-        }
-
-        fun setting(label: String, setting: Any?, absent: String = "unlimited") =
-            value(label, green(singleLine(setting?.toString() ?: absent)))
-
+    private fun details(width: Int, status: RunDashboardStatus): Widget = InfoLayout(width).apply {
         section("run", gap = false)
         value("id", magenta(singleLine(context.runId)))
         value(
@@ -134,25 +109,23 @@ internal class RunInfo(private val context: RunDashboardContext) {
         }.toSortedMap(compareBy<String> { it.substringAfter("paper_").toIntOrNull() ?: Int.MAX_VALUE }.thenBy { it })
         byPaper.entries.forEachIndexed { paperIndex, (paper, tasks) ->
             val lastPaper = paperIndex == byPaper.size - 1
-            cell(text(gray(if (lastPaper) "└─ " else "├─ ") + green(singleLine(paper))))
+            line(gray(if (lastPaper) "└─ " else "├─ ") + green(singleLine(paper)))
             val paperPrefix = if (lastPaper) "   " else "│  "
             val problems = tasks.groupBy { id ->
                 context.taskProblems[id]?.problem ?: id.value.substringAfter('_').substringAfter('_')
             }.toSortedMap()
             problems.entries.forEachIndexed { problemIndex, (problem, ids) ->
                 val lastProblem = problemIndex == problems.size - 1
-                cell(text(gray(paperPrefix + if (lastProblem) "└─ " else "├─ ") + cyan(singleLine(problem))))
+                line(gray(paperPrefix + if (lastProblem) "└─ " else "├─ ") + cyan(singleLine(problem)))
                 val prefix = paperPrefix + if (lastProblem) "   " else "│  "
                 val ordered = ids.sortedBy { it.value.substringAfter('.').substringBefore('_').toInt() }
                 ordered.forEachIndexed { index, id ->
-                    cell(
-                        text(
-                            gray(prefix + if (index == ordered.size - 1) "└─ " else "├─ ") + id.value +
-                                    gray("  ${singleLine(context.taskSubmissions.getValue(id).value)}")
-                        )
+                    line(
+                        gray(prefix + if (index == ordered.size - 1) "└─ " else "├─ ") + id.value +
+                                gray("  ${singleLine(context.taskSubmissions.getValue(id).value)}")
                     )
                 }
             }
         }
-    }
+    }.render()
 }

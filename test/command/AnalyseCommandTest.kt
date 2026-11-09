@@ -46,10 +46,10 @@ class AnalyseCommandTest {
             Files.readString(samplePath(path))
         }
         val text = invoke(path.toString())
-        assertContains(text, "First attempt: 1/1 accepted (100.00%)")
-        assertContains(text, "pass@1: first=100.00%, final=100.00% (1/1 eligible tasks)")
-        assertContains(text, "pass@5: first=n/a, final=n/a (0/1 eligible tasks)")
-        assertContains(text, "paper paper_1")
+        assertContains(text, Regex("first attempt\\s+1/1 accepted \\(100.00%\\)"))
+        assertContains(text, Regex("pass@1\\s+first=100.00%, final=100.00% \\(1/1 eligible tasks\\)"))
+        assertContains(text, Regex("pass@5\\s+first=n/a, final=n/a \\(0/1 eligible tasks\\)"))
+        assertContains(text, "└─ paper_1")
         assertFalse(text.contains("private prompt"))
         assertEquals(before, withContext(Dispatchers.IO) {
             Files.readString(path.resolve("run.json"))
@@ -57,6 +57,18 @@ class AnalyseCommandTest {
         assertEquals(recordBefore, withContext(Dispatchers.IO) {
             Files.readString(samplePath(path))
         })
+    }
+
+    @Test
+    fun textFileExportsKeepThePlainFormatWithoutTerminalStyling() = runBlocking {
+        val path = savedRun(root.resolve("run"), listOf(sample(taskA, 1, accepted)))
+        val destination = root.resolve("report.txt")
+        assertTrue(invoke(path.toString(), "--output", destination.toString()).isBlank())
+        val text = withContext(Dispatchers.IO) { Files.readString(destination) }
+        assertTrue(text.startsWith("ASTRID saved-run analysis\n"))
+        assertContains(text, "First attempt: 1/1 accepted (100.00%)")
+        assertContains(text, "paper paper_1")
+        assertFalse(text.contains('\u001b'))
     }
 
     @Test
@@ -109,7 +121,8 @@ class AnalyseCommandTest {
         val path =
             savedRun(root.resolve("run"), listOf(sample(id, 1, accepted)), taskIds = listOf(id), labels = emptyMap())
         val text = invoke(path.toString(), "--dataset-root", SimpleTestDataset.datasetRoot.toString())
-        assertContains(text, "task_type 2")
+        assertContains(text, "task types")
+        assertContains(text, "└─ 2")
         assertContains(text, "current dataset checkout")
     }
 
