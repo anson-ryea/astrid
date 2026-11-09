@@ -50,7 +50,7 @@ class BenchmarkRunner(
                                 // Every evaluation outcome is a sample result, not a run error.
                                 engine.run(task, sampleIndex, onEvent = onEvent) { record ->
                                     saveMutex.withLock { store.save(record) }
-                                    onEvent(RunEvent.SampleFinished(record.taskId, record.sampleIndex, record.finalResult))
+                                    onEvent(RunEvent.SampleFinished(record.taskId, record.sampleIndex, record.outcome))
                                 }
                             }
                         }

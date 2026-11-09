@@ -1,6 +1,5 @@
 package run
 
-import domain.EvaluationResult
 import domain.TaskId
 
 /** Execution updates, independent of terminal rendering and persisted agent trajectories. */
@@ -22,6 +21,6 @@ sealed interface RunEvent {
     data class SampleFinished(
         val taskId: TaskId,
         val sampleIndex: Int,
-        val result: EvaluationResult,
+        val outcome: SampleOutcome,
     ) : RunEvent
 }

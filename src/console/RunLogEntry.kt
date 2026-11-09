@@ -4,6 +4,7 @@ import com.github.ajalt.mordant.rendering.TextColors
 import domain.EvaluationResult
 import run.RunEvent
 import run.RunPhase
+import run.SampleOutcome
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 
@@ -23,11 +24,17 @@ internal fun RunEvent.logEntry(): RunLogEntry? = when (this) {
     })
     is RunEvent.SampleStarted -> RunLogEntry("Started $taskId · sample $sampleIndex")
     is RunEvent.SampleFinished -> {
-        val (label, colour) = when (result) {
-            EvaluationResult.Accepted -> "success" to TextColors.green
-            is EvaluationResult.Rejected -> "failed" to TextColors.red
-            is EvaluationResult.NeedsReview -> "needs review" to TextColors.yellow
-            is EvaluationResult.InfrastructureFailure -> "error" to TextColors.red
+        val (label, colour) = when (val outcome = outcome) {
+            is SampleOutcome.BudgetExhausted -> "budget exhausted (${outcome.limit.manifestValue})" to TextColors.yellow
+            is SampleOutcome.ProviderFailure -> "provider error" to TextColors.red
+            is SampleOutcome.ExecutionFailure -> "execution error" to TextColors.red
+            is SampleOutcome.RepairLimitReached -> "failed" to TextColors.red
+            is SampleOutcome.Evaluated -> when (outcome.result) {
+                EvaluationResult.Accepted -> "success" to TextColors.green
+                is EvaluationResult.Rejected -> "failed" to TextColors.red
+                is EvaluationResult.NeedsReview -> "needs review" to TextColors.yellow
+                is EvaluationResult.InfrastructureFailure -> "error" to TextColors.red
+            }
         }
         RunLogEntry("Finished $taskId · sample $sampleIndex: $label", colour)
     }

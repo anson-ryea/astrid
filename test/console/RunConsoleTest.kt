@@ -44,6 +44,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.yield
+import run.SampleOutcome
 import run.RunEvent
 import run.SamplePhase
 import run.RunPhase
@@ -137,7 +138,7 @@ class RunConsoleTest {
             assertContains(recorder.output(), "PREPARING")
             assertContains(recorder.output(), "\u001b[")
             onEvent(RunEvent.SampleStarted(context.taskSubmissions.keys.single(), 1))
-            onEvent(RunEvent.SampleFinished(context.taskSubmissions.keys.single(), 1, EvaluationResult.Accepted))
+            onEvent(RunEvent.SampleFinished(context.taskSubmissions.keys.single(), 1, SampleOutcome.Evaluated(EvaluationResult.Accepted)))
         }
         assertContains(recorder.output(), "1/1 tasks")
         assertContains(recorder.output(), "COMPLETE")
@@ -151,7 +152,7 @@ class RunConsoleTest {
             val recorder = TerminalRecorder(width = 120, supportsAnsiCursor = true)
             RunConsole(Terminal(terminalInterface = recorder), context, mode = mode).run { onEvent ->
                 onEvent(RunEvent.SampleStarted(context.taskSubmissions.keys.single(), 1))
-                onEvent(RunEvent.SampleFinished(context.taskSubmissions.keys.single(), 1, EvaluationResult.Accepted))
+                onEvent(RunEvent.SampleFinished(context.taskSubmissions.keys.single(), 1, SampleOutcome.Evaluated(EvaluationResult.Accepted)))
             }
             assertEquals(1, Regex("astrid", RegexOption.IGNORE_CASE).findAll(recorder.output()).count())
             assertFalse(recorder.output().contains('\u001b'))
@@ -226,7 +227,7 @@ class RunConsoleTest {
             onEvent(RunEvent.RunPhaseChanged(RunPhase.Running))
             for (sample in 1..100) {
                 onEvent(RunEvent.SampleStarted(task, sample))
-                onEvent(RunEvent.SampleFinished(task, sample, EvaluationResult.Accepted))
+                onEvent(RunEvent.SampleFinished(task, sample, SampleOutcome.Evaluated(EvaluationResult.Accepted)))
             }
         }
         val output = recorder.output()
@@ -263,7 +264,7 @@ class RunConsoleTest {
             assertFalse(logs.contains("astrid"))
             input.keys.put(KeyboardEvent("l"))
             waitFor("l logs")
-            onEvent(RunEvent.SampleFinished(task, 1, EvaluationResult.Accepted))
+            onEvent(RunEvent.SampleFinished(task, 1, SampleOutcome.Evaluated(EvaluationResult.Accepted)))
             waitFor("1 success")
             input.keys.put(KeyboardEvent("l"))
             waitFor("l dashboard")
@@ -372,7 +373,7 @@ class RunConsoleTest {
             waitFor(task.value)
             input.keys.put(KeyboardEvent("Home"))
             waitFor("proofs-01")
-            onEvent(RunEvent.SampleFinished(task, 1, EvaluationResult.Accepted))
+            onEvent(RunEvent.SampleFinished(task, 1, SampleOutcome.Evaluated(EvaluationResult.Accepted)))
             input.keys.put(KeyboardEvent("l"))
             waitFor("l dashboard")
             waitFor("Finished $task")

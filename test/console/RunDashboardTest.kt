@@ -19,6 +19,8 @@ import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import run.RunEvent
 import run.SamplePhase
+import run.SampleBudget
+import run.SampleOutcome
 
 class RunDashboardTest {
     private val proof = TaskId("task_1.1_theorem_11")
@@ -35,6 +37,30 @@ class RunDashboardTest {
             width = width, ansiLevel = if (colour) AnsiLevel.TRUECOLOR else AnsiLevel.NONE,
         ),
     )
+
+    @Test
+    fun displaysDistinctInterruptionCountersWithinTheViewport() {
+        val state = RunDashboardState()
+            .reduce(RunEvent.SampleFinished(proof, 1, SampleOutcome.BudgetExhausted(SampleBudget.OUTPUT_TOKENS, "truncated")))
+            .reduce(RunEvent.SampleFinished(proof, 2, SampleOutcome.ProviderFailure("unavailable")))
+            .reduce(RunEvent.SampleFinished(statement, 1, SampleOutcome.ExecutionFailure("tool failed")))
+        val dashboard = RunDashboard(context)
+        for (width in listOf(20, 80, 160)) for (height in listOf(3, 8, 24)) {
+            val screen = terminal(width)
+            val frame = dashboard.render(state, 10.seconds, width, height = height)
+            assertTrue(frame.render(screen, width).height <= height - 1)
+            val output = screen.render(frame)
+            assertTrue(output.lines().all { it.length <= width })
+            if (width >= 80 && height == 24) {
+                assertContains(output, "1 budget exhausted")
+                assertContains(output, "1 provider error")
+                assertContains(output, "1 execution error")
+                assertContains(output, "0 failed")
+                assertContains(output, "0 errors")
+                assertContains(output, "3/4 samples")
+            }
+        }
+    }
 
     @Test
     fun alignsElapsedTimeAtTheRightAndReservesAnEmptyFooter() {
@@ -58,7 +84,7 @@ class RunDashboardTest {
     @Test
     fun showsConcurrentStagesAndDoesNotConfuseSamplesWithCompletedTasks() {
         var state = RunDashboardState()
-            .reduce(RunEvent.SampleFinished(proof, 1, EvaluationResult.Accepted))
+            .reduce(RunEvent.SampleFinished(proof, 1, SampleOutcome.Evaluated(EvaluationResult.Accepted)))
             .reduce(RunEvent.PhaseChanged(proof, 2, SamplePhase.Generating))
             .reduce(RunEvent.PhaseChanged(statement, 1, SamplePhase.Evaluating))
         val dashboard = RunDashboard(context)
@@ -79,7 +105,7 @@ class RunDashboardTest {
         assertTrue(output.indexOf("success") < output.indexOf("review"))
         assertTrue(output.indexOf("review") < output.indexOf("failed"))
 
-        state = state.reduce(RunEvent.SampleFinished(proof, 2, EvaluationResult.Rejected("invalid proof")))
+        state = state.reduce(RunEvent.SampleFinished(proof, 2, SampleOutcome.Evaluated(EvaluationResult.Rejected("invalid proof"))))
         val updated = terminal(160).render(dashboard.render(state, 12.seconds, 160))
         assertContains(updated, "1/2 tasks")
         assertContains(updated, "2/4 samples")
@@ -90,8 +116,8 @@ class RunDashboardTest {
     @Test
     fun keepsOutcomesDistinctAndFitsNarrowTerminals() {
         val state = RunDashboardState()
-            .reduce(RunEvent.SampleFinished(proof, 1, EvaluationResult.InfrastructureFailure("provider unavailable")))
-            .reduce(RunEvent.SampleFinished(statement, 1, EvaluationResult.NeedsReview("manual check")))
+            .reduce(RunEvent.SampleFinished(proof, 1, SampleOutcome.Evaluated(EvaluationResult.InfrastructureFailure("provider unavailable"))))
+            .reduce(RunEvent.SampleFinished(statement, 1, SampleOutcome.Evaluated(EvaluationResult.NeedsReview("manual check"))))
         for (width in listOf(32, 60, 80, 120, 160)) {
             val output = terminal(width).render(RunDashboard(context).render(state, 27.hours, width))
             assertTrue(output.lines().all { it.length <= width }, "overflow at $width columns")
@@ -157,7 +183,7 @@ class RunDashboardTest {
         var state = RunDashboardState()
         ids.take(7).forEachIndexed { index, id ->
             state = state.reduce(RunEvent.SampleFinished(id, 1,
-                if (index < 6) EvaluationResult.Accepted else EvaluationResult.Rejected("invalid proof")))
+                SampleOutcome.Evaluated(if (index < 6) EvaluationResult.Accepted else EvaluationResult.Rejected("invalid proof"))))
         }
         state = state.reduce(RunEvent.PhaseChanged(ids[7], 1, SamplePhase.Generating))
             .reduce(RunEvent.PhaseChanged(ids[8], 1, SamplePhase.Evaluating))

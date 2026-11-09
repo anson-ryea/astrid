@@ -230,13 +230,13 @@ class FileRunStore(runDirectory: Path) : RunStore {
 
     private fun sampleJson(record: TaskRunRecord): JsonObject =
         buildJsonObject {
-            put("schema_version", JsonPrimitive(3))
+            put("schema_version", JsonPrimitive(5))
             put("task_id", JsonPrimitive(record.taskId.value))
             put("sample_index", JsonPrimitive(record.sampleIndex))
             put("system_prompt", JsonPrimitive(record.systemPrompt))
             put("task_prompt", JsonPrimitive(record.taskPrompt))
             put("turns", JsonArray(record.turns.map(::turnJson)))
-            put("final_result", resultJson(record.finalResult))
+            put("outcome", outcomeJson(record.outcome))
             put("trajectory_file", JsonPrimitive("trajectory.jsonl"))
             record.workspace?.let { workspace ->
                 put("workspace", buildJsonObject {
@@ -295,8 +295,34 @@ class FileRunStore(runDirectory: Path) : RunStore {
             }
         }
 
-    private fun resultJson(result: EvaluationResult): JsonObject =
-        buildJsonObject {
+    private fun outcomeJson(outcome: SampleOutcome): JsonObject = buildJsonObject {
+        when (outcome) {
+            is SampleOutcome.Evaluated -> {
+                put("kind", JsonPrimitive("evaluated"))
+                put("result", resultJson(outcome.result))
+            }
+            is SampleOutcome.RepairLimitReached -> {
+                put("kind", JsonPrimitive("repair_limit"))
+                put("result", resultJson(outcome.result))
+            }
+            is SampleOutcome.BudgetExhausted -> {
+                put("kind", JsonPrimitive("budget_exhausted"))
+                put("limit", JsonPrimitive(outcome.limit.manifestValue))
+                put("reason", JsonPrimitive(outcome.reason))
+            }
+            is SampleOutcome.ProviderFailure -> {
+                put("kind", JsonPrimitive("provider_failure"))
+                put("reason", JsonPrimitive(outcome.reason))
+            }
+            is SampleOutcome.ExecutionFailure -> {
+                put("kind", JsonPrimitive("execution_failure"))
+                put("reason", JsonPrimitive(outcome.reason))
+            }
+        }
+    }
+
+    private fun resultJson(result: EvaluationResult?): JsonElement =
+        if (result == null) JsonNull else buildJsonObject {
             when (result) {
                 EvaluationResult.Accepted ->
                     put("kind", JsonPrimitive("accepted"))

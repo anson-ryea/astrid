@@ -55,17 +55,22 @@ class RunDashboard(private val context: RunDashboardContext) {
         val samples = if (context.samplesPerTask > 1)
             " · ${state.completedSamples}/${context.totalSamples} samples" else ""
         val progressLabel = "$completed/${context.totalTasks} tasks$samples"
-        val stats = listOf(
-            "✓ ${state.acceptedSamples} success" to green,
-            "⚠ ${state.needsReviewSamples} review" to yellow,
-            "× ${state.rejectedSamples} failed" to red,
-            "! ${state.infrastructureFailureSamples} ${if (state.infrastructureFailureSamples == 1) "error" else "errors"}" to red,
-        )
+        val stats = buildList {
+            addAll(listOf(
+                "✓ ${state.acceptedSamples} success" to green,
+                "⚠ ${state.needsReviewSamples} review" to yellow,
+                "× ${state.rejectedSamples} failed" to red,
+                "! ${state.infrastructureFailureSamples} ${if (state.infrastructureFailureSamples == 1) "error" else "errors"}" to red,
+            ))
+            if (state.budgetExhaustedSamples > 0) add("↯ ${state.budgetExhaustedSamples} budget exhausted" to yellow)
+            if (state.providerFailureSamples > 0) add("! ${state.providerFailureSamples} provider ${if (state.providerFailureSamples == 1) "error" else "errors"}" to red)
+            if (state.executionFailureSamples > 0) add("! ${state.executionFailureSamples} execution ${if (state.executionFailureSamples == 1) "error" else "errors"}" to red)
+        }
         val outcomes = stats.joinToString("  ") { (text, colour) -> colour(text) }
         val barWidth = minOf((contentWidth / 5).coerceIn(6, 24),
             (contentWidth - progressLabel.length - 2).coerceAtLeast(1))
         val singleSummaryRow = barWidth + 2 + progressLabel.length + 3 +
-            stats.sumOf { it.first.length } + 6 <= contentWidth
+            stats.sumOf { it.first.length } + (stats.size - 1) * 2 <= contentWidth
         val progress = horizontalLayout {
             spacing = 2
             cell(ProgressBar(

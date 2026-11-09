@@ -8,6 +8,7 @@ import ai.koog.agents.core.tools.ToolRegistry
 import ai.koog.agents.features.opentelemetry.feature.OpenTelemetry
 import ai.koog.agents.features.tracing.feature.Tracing
 import ai.koog.prompt.dsl.prompt
+import ai.koog.prompt.executor.clients.LLMClientException
 import ai.koog.prompt.executor.model.PromptExecutor
 import ai.koog.prompt.message.MessagePart
 import ai.koog.prompt.params.LLMParams
@@ -101,6 +102,14 @@ class TaskRunEngine(
 
         val turns = mutableListOf<TaskRunRecord.Turn>()
         val trajectory = KoogTrajectoryRecorder()
+        var outcome: SampleOutcome? = null
+        // Capture explicit limits before Koog can wrap their exceptions.
+        fun enforceBudget(available: Boolean, limit: SampleBudget, reason: String) {
+            if (!available) {
+                outcome = SampleOutcome.BudgetExhausted(limit, reason)
+                throw IllegalStateException(reason)
+            }
+        }
 
         // Koog 1.3.0 tracing is a graph feature. The sample loop runs in one node.
         val strategy = strategy<String, String>("benchmarkSample") {
@@ -110,7 +119,8 @@ class TaskRunEngine(
                 // Bound model requests inside the node independently of graph traversal.
                 fun consumeIteration() {
                     specification.maxAgentIterations?.let { limit ->
-                        check(usedAgentIterations < limit) { "agent iteration limit exceeded" }
+                        enforceBudget(usedAgentIterations < limit, SampleBudget.AGENT_ITERATIONS,
+                            "agent iteration limit exceeded")
                         usedAgentIterations++
                     }
                 }
@@ -133,12 +143,12 @@ class TaskRunEngine(
                         val otherCalls = toolCalls.size - workspaceCalls
                         // Check both budgets before executing any part of the batch.
                         specification.maxWorkspaceToolCallsPerAttempt?.let { limit ->
-                            check(workspaceCalls <= limit - usedWorkspaceToolCalls) {
-                                "workspace tool call limit exceeded"
-                            }
+                            enforceBudget(workspaceCalls <= limit - usedWorkspaceToolCalls,
+                                SampleBudget.WORKSPACE_TOOL_CALLS, "workspace tool call limit exceeded")
                         }
                         specification.maxToolCallsPerAttempt?.let { limit ->
-                            check(otherCalls <= limit - usedToolCalls) { "tool call limit exceeded" }
+                            enforceBudget(otherCalls <= limit - usedToolCalls,
+                                SampleBudget.TOOL_CALLS, "tool call limit exceeded")
                         }
 
                         if (specification.maxWorkspaceToolCallsPerAttempt != null) usedWorkspaceToolCalls += workspaceCalls
@@ -161,14 +171,14 @@ class TaskRunEngine(
 
                     val (submission, report) =
                         if (reply.finishReason == "length") {
-                            null to evaluator.reportUnassessed(task, EvaluationResult.InfrastructureFailure(
-                                "model response was truncated at the output-token limit",
-                            ))
+                            outcome = SampleOutcome.BudgetExhausted(SampleBudget.OUTPUT_TOKENS,
+                                "model response was truncated at the output-token limit")
+                            null to null
                         } else {
                             phaseChanged(SamplePhase.Evaluating)
                             session?.assessDetailed() ?: assess(task, protocol, evaluator, response)
                         }
-                    val result = report.result
+                    val result = report?.result
 
                     turns += TaskRunRecord.Turn(
                         repairTurn = repairTurn,
@@ -177,10 +187,16 @@ class TaskRunEngine(
                         submission = submission,
                         result = result,
                         workspaceFiles = workspace?.snapshot() ?: emptyList(),
-                        evaluationEvidence = report.evidence,
+                        evaluationEvidence = report?.evidence,
                     )
 
-                    if (report.publicDiagnostic == null || !specification.repairPolicy.shouldRepair(repairTurn, result)) break
+                    if (report == null) break
+                    outcome = SampleOutcome.Evaluated(report.result)
+                    if (report.publicDiagnostic == null) break
+                    if (!specification.repairPolicy.shouldRepair(repairTurn, report.result)) {
+                        if (result is EvaluationResult.Rejected) outcome = SampleOutcome.RepairLimitReached(result)
+                        break
+                    }
 
                     phaseChanged(SamplePhase.Repairing)
                     message = repairPromptRenderer.render(
@@ -195,7 +211,7 @@ class TaskRunEngine(
             edge(runSample forwardTo nodeFinish)
         }
 
-        val finalResult = try {
+        val finalOutcome = try {
             val config = AIAgentConfig(
                 prompt = prompt(
                     "benchmark-${task.manifest.taskId.value}-$sampleIndex",
@@ -222,17 +238,21 @@ class TaskRunEngine(
                 }
             }.use { agent -> agent.run(taskPrompt) }
 
-            turns.last().result
+            checkNotNull(outcome) { "agent completed without a sample outcome" }
         } catch (failure: CancellationException) {
             throw failure
         } catch (failure: Exception) {
             eventDeliveryFailure?.let { throw it }
-            EvaluationResult.InfrastructureFailure(
-                buildString {
+            val budgetOutcome = outcome as? SampleOutcome.BudgetExhausted
+            budgetOutcome ?: run {
+                val reason = buildString {
                     append("agent execution failed: ${failure.javaClass.simpleName}")
                     failure.message?.takeIf { it.isNotBlank() }?.let { append(": $it") }
-                },
-            )
+                }
+                if (generateSequence<Throwable>(failure) { it.cause }.any { it is LLMClientException })
+                    SampleOutcome.ProviderFailure(reason)
+                else SampleOutcome.ExecutionFailure(reason)
+            }
         }
 
         return TaskRunRecord(
@@ -241,7 +261,7 @@ class TaskRunEngine(
             systemPrompt = systemText,
             taskPrompt = taskPrompt,
             turns = turns.toList(),
-            finalResult = finalResult,
+            outcome = finalOutcome,
             trajectory = trajectory.events,
             workspace = workspace?.record(),
         )

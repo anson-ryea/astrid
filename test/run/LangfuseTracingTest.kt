@@ -53,7 +53,7 @@ class LangfuseTracingTest {
                 }.awaitAll()
             }
             records.forEach {
-                assertEquals(EvaluationResult.Accepted, it.finalResult)
+                assertEquals(SampleOutcome.Evaluated(EvaluationResult.Accepted), it.outcome)
                 assertEquals(2, it.turns.size)
                 assertEquals("AgentClosingEvent", it.trajectory.last().kind)
             }
@@ -84,7 +84,7 @@ class LangfuseTracingTest {
             val task = createRunTask(temporaryDirectory)
             val record = createRunEngine(temporaryDirectory, ScriptedPromptExecutor(listOf("sensitive-response")),
                 langfuse = receiver.tracing(captureContent = false)).run(task, 1)
-            assertEquals(EvaluationResult.Accepted, record.finalResult)
+            assertEquals(SampleOutcome.Evaluated(EvaluationResult.Accepted), record.outcome)
             val payloads = receiver.payloads.joinToString()
             assertTrue(receiver.spans().isNotEmpty())
             assertFalse(payloads.contains("System instructions."))
@@ -101,7 +101,7 @@ class LangfuseTracingTest {
                 langfuse = receiver.tracing())
             for (index in 1..2) {
                 val record = engine.run(task, index)
-                assertEquals(EvaluationResult.Accepted, record.finalResult)
+                assertEquals(SampleOutcome.Evaluated(EvaluationResult.Accepted), record.outcome)
                 assertEquals("AgentClosingEvent", record.trajectory.last().kind)
             }
             assertTrue(receiver.payloads.isNotEmpty())
@@ -126,7 +126,7 @@ class LangfuseTracingTest {
             }
             val record = createRunEngine(temporaryDirectory, executor, specification,
                 langfuse = receiver.tracing(), toolRegistry = registry).run(task, 1)
-            assertEquals(EvaluationResult.Accepted, record.finalResult)
+            assertEquals(SampleOutcome.Evaluated(EvaluationResult.Accepted), record.outcome)
             assertTrue(record.trajectory.any { it.kind == "ToolCallCompletedEvent" })
             val payloads = receiver.payloads.joinToString()
             assertContains(payloads, "gen_ai.tool.name")
@@ -142,7 +142,7 @@ class LangfuseTracingTest {
             val executor = ScriptedPromptExecutor(listOf("unused")) { error("synthetic-model-failure") }
             val record = createRunEngine(temporaryDirectory, executor,
                 langfuse = receiver.tracing()).run(task, 1)
-            assertIs<EvaluationResult.InfrastructureFailure>(record.finalResult)
+            assertIs<SampleOutcome.ExecutionFailure>(record.outcome)
             assertTrue(record.trajectory.any { it.kind == "AgentExecutionFailedEvent" })
             assertTrue(receiver.spans().any { span ->
                 span["status"]?.jsonObject?.get("code")?.jsonPrimitive?.content in listOf("2", "STATUS_CODE_ERROR")

@@ -64,7 +64,7 @@ class BackendIndependentWorkspaceTest {
         val record = engine.run(task, 1) {
             assertEquals(true, Files.exists(roots.single().resolve("Answer.txt")))
         }
-        assertEquals(EvaluationResult.Accepted, record.finalResult)
+        assertEquals(SampleOutcome.Evaluated(EvaluationResult.Accepted), record.outcome)
         assertEquals("file answer", record.turns.single().submission)
         assertEquals("finished response", record.turns.single().response)
         assertContains(record.taskPrompt, "Write your answer to /workspace/Answer.txt.")

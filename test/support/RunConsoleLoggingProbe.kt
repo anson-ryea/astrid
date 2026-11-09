@@ -17,6 +17,7 @@ import kotlin.time.TestTimeSource
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import run.SampleOutcome
 import run.RunEvent
 import run.RunPhase
 import run.SamplePhase
@@ -54,7 +55,7 @@ internal object RunConsoleLoggingProbe {
             withTimeout(3.seconds) {
                 while (!recorder.output().contains("EVALUATING")) delay(10.milliseconds)
             }
-            onEvent(RunEvent.SampleFinished(task, 1, EvaluationResult.Accepted))
+            onEvent(RunEvent.SampleFinished(task, 1, SampleOutcome.Evaluated(EvaluationResult.Accepted)))
         }
     }
 }

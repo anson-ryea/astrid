@@ -1,5 +1,6 @@
 package run
 
+import ai.koog.prompt.executor.clients.LLMClientException
 import ai.koog.prompt.message.Message
 import ai.koog.prompt.message.ResponseMetaInfo
 import console.RunEventProcessor
@@ -64,7 +65,7 @@ class BenchmarkRunnerTest {
                 onEvent = { event ->
                     if (event is RunEvent.SampleFinished) {
                         assertTrue(store.records.any {
-                            it.taskId == event.taskId && it.sampleIndex == event.sampleIndex && it.finalResult == event.result
+                            it.taskId == event.taskId && it.sampleIndex == event.sampleIndex && it.outcome == event.outcome
                         })
                     }
                     events += event
@@ -86,7 +87,7 @@ class BenchmarkRunnerTest {
             )
             assertEquals(listOf(first.manifest.taskId, second.manifest.taskId), store.taskIds)
             assertEquals(4, executor.prompts.size)
-            assertTrue(store.records.all { it.finalResult == EvaluationResult.Accepted })
+            assertTrue(store.records.all { it.outcome == SampleOutcome.Evaluated(EvaluationResult.Accepted) })
             assertEquals(listOf(first, second).flatMap { task ->
                 (1..2).flatMap { sample ->
                     listOf(
@@ -94,7 +95,7 @@ class BenchmarkRunnerTest {
                         RunEvent.PhaseChanged(task.manifest.taskId, sample, SamplePhase.Preparing),
                         RunEvent.PhaseChanged(task.manifest.taskId, sample, SamplePhase.Generating),
                         RunEvent.PhaseChanged(task.manifest.taskId, sample, SamplePhase.Evaluating),
-                        RunEvent.SampleFinished(task.manifest.taskId, sample, EvaluationResult.Accepted),
+                        RunEvent.SampleFinished(task.manifest.taskId, sample, SampleOutcome.Evaluated(EvaluationResult.Accepted)),
                     )
                 }
             }, events)
@@ -130,7 +131,7 @@ class BenchmarkRunnerTest {
             val task = createRunTask(temporaryDirectory)
             val next = createRunTask(temporaryDirectory, id = "task_1.2_theorem_11")
             val executor = ScriptedPromptExecutor(listOf("fail", "fail", "proof", "proof")) {
-                check(it != "fail") { "provider unavailable" }
+                if (it == "fail") throw LLMClientException("synthetic", "provider unavailable")
                 Message.Assistant(it, ResponseMetaInfo.Empty)
             }
             val store = RecordingRunStore()
@@ -145,8 +146,10 @@ class BenchmarkRunnerTest {
 
             assertEquals(listOf("begin", "save:${task.manifest.taskId}:1", "save:${task.manifest.taskId}:2",
                 "save:${next.manifest.taskId}:1", "save:${next.manifest.taskId}:2", "complete"), store.events)
-            store.records.take(2).forEach { assertIs<EvaluationResult.InfrastructureFailure>(it.finalResult) }
-            assertTrue(store.records.drop(2).all { it.finalResult == EvaluationResult.Accepted })
+            store.records.take(2).forEach {
+                assertIs<SampleOutcome.ProviderFailure>(it.outcome)
+            }
+            assertTrue(store.records.drop(2).all { it.outcome == SampleOutcome.Evaluated(EvaluationResult.Accepted) })
             assertNull(store.failureReason)
             assertEquals(4, executor.prompts.size)
         }
@@ -170,7 +173,7 @@ class BenchmarkRunnerTest {
             runner.run()
 
             assertEquals(4, store.records.size)
-            store.records.forEach { assertIs<EvaluationResult.NeedsReview>(it.finalResult) }
+            store.records.forEach { assertIs<EvaluationResult.NeedsReview>(assertIs<SampleOutcome.Evaluated>(it.outcome).result) }
             assertEquals("complete", store.events.last())
             assertNull(store.failureReason)
             assertEquals(4, executor.prompts.size)
@@ -193,10 +196,10 @@ class BenchmarkRunnerTest {
 
         assertEquals(4, store.records.size)
         store.records.take(2).forEach {
-            assertIs<EvaluationResult.Rejected>(it.finalResult)
+            assertIs<SampleOutcome.RepairLimitReached>(it.outcome)
             assertEquals(2, it.turns.size)
         }
-        assertTrue(store.records.drop(2).all { it.finalResult == EvaluationResult.Accepted })
+        assertTrue(store.records.drop(2).all { it.outcome == SampleOutcome.Evaluated(EvaluationResult.Accepted) })
         assertEquals(6, executor.prompts.size)
         assertEquals("complete", store.events.last())
         assertNull(store.failureReason)
@@ -233,12 +236,12 @@ class BenchmarkRunnerTest {
         assertEquals(2, peak.get())
         assertTrue(threads.size >= 2)
         assertEquals(12, store.records.size)
-        assertTrue(store.records.all { it.finalResult == EvaluationResult.Accepted })
+        assertTrue(store.records.all { it.outcome == SampleOutcome.Evaluated(EvaluationResult.Accepted) })
         for (task in tasks) {
             assertEquals(listOf(1, 2), store.records.filter { it.taskId == task.manifest.taskId }.map { it.sampleIndex })
             for (sample in 1..2) {
                 val started = RunEvent.SampleStarted(task.manifest.taskId, sample)
-                val finished = RunEvent.SampleFinished(task.manifest.taskId, sample, EvaluationResult.Accepted)
+                val finished = RunEvent.SampleFinished(task.manifest.taskId, sample, SampleOutcome.Evaluated(EvaluationResult.Accepted))
                 assertEquals(1, events.count { it == started })
                 assertEquals(1, events.count { it == finished })
                 assertTrue(events.indexOf(started) < events.indexOf(finished))
@@ -268,7 +271,7 @@ class BenchmarkRunnerTest {
                 val directory = runDirectory.resolve("tasks/${task.manifest.taskId}/samples/${sample.toString().padStart(3, '0')}")
                 val record = Json.parseToJsonElement(Files.readString(directory.resolve("record.json"))).jsonObject
                 assertEquals(if (task == tasks.first()) "infrastructure_failure" else "accepted",
-                    record.getValue("final_result").jsonObject.getValue("kind").jsonPrimitive.content)
+                    record.getValue("outcome").jsonObject.getValue("result").jsonObject.getValue("kind").jsonPrimitive.content)
                 assertTrue(Files.isRegularFile(directory.resolve("trajectory.jsonl")))
             }
         }
@@ -361,15 +364,15 @@ class BenchmarkRunnerTest {
     }
 
     @Test
-    fun reportsInfrastructureFailuresAsFinishedSamplesAfterSaving() = runBlocking {
+    fun reportsExecutionFailuresAsFinishedSamplesAfterSaving() = runBlocking {
         val task = createRunTask(temporaryDirectory)
         val store = RecordingRunStore()
         val events = mutableListOf<RunEvent>()
         runner(listOf(task), ScriptedPromptExecutor(emptyList()), store, onEvent = { events += it }).run()
 
         val finished = assertIs<RunEvent.SampleFinished>(events.last())
-        assertIs<EvaluationResult.InfrastructureFailure>(finished.result)
-        assertEquals(store.records.single().finalResult, finished.result)
+        assertIs<SampleOutcome.ExecutionFailure>(finished.outcome)
+        assertEquals(store.records.single().outcome, finished.outcome)
         assertEquals("complete", store.events.last())
     }
 

@@ -20,6 +20,7 @@ import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import run.SampleOutcome
 import run.RunEvent
 import run.SamplePhase
 
@@ -43,7 +44,7 @@ class RunEventProcessorTest {
                             2 -> EvaluationResult.NeedsReview("manual review")
                             else -> EvaluationResult.InfrastructureFailure("provider unavailable")
                         }
-                        processor.emit(RunEvent.SampleFinished(id, sample, result))
+                        processor.emit(RunEvent.SampleFinished(id, sample, SampleOutcome.Evaluated(result)))
                     }
                 }
             }.joinAll()
@@ -82,7 +83,7 @@ class RunEventProcessorTest {
         val initial = processor.state.value
         for (sample in 1..8) {
             processor.emit(RunEvent.SampleStarted(taskId, sample))
-            processor.emit(RunEvent.SampleFinished(taskId, sample, EvaluationResult.Accepted))
+            processor.emit(RunEvent.SampleFinished(taskId, sample, SampleOutcome.Evaluated(EvaluationResult.Accepted)))
         }
         // All sixteen events fit in the buffer without yielding to the consumer.
         assertEquals(0, processor.state.value.completedSamples)

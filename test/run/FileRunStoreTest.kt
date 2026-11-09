@@ -77,7 +77,7 @@ class FileRunStoreTest {
     }
 
     @Test
-    fun persistsSemanticEvidenceInVersionThreeWithoutPrivateSources() = runBlocking {
+    fun persistsSemanticEvidenceWithoutPrivateSources() = runBlocking {
         val directory = temporaryDirectory.resolve("semantic")
         val store = FileRunStore(directory)
         store.begin(specification(), listOf(taskId))
@@ -89,7 +89,7 @@ class FileRunStoreTest {
         store.save(base.copy(turns = listOf(base.turns.single().copy(evaluationEvidence = evidence))))
         store.complete()
         val sample = readJson(directory.resolve("tasks/${taskId.value}/samples/001/record.json"))
-        assertEquals("3", sample.getValue("schema_version").jsonPrimitive.content)
+        assertEquals("5", sample.getValue("schema_version").jsonPrimitive.content)
         val saved = sample.getValue("turns").jsonArray.single().jsonObject.getValue("evaluation_evidence").jsonObject
         assertEquals("a".repeat(64), saved.getValue("contract_sha256").jsonPrimitive.content)
         assertEquals("proved", saved.getValue("obligations").jsonArray.single().jsonObject.getValue("refutation").jsonPrimitive.content)
@@ -177,7 +177,7 @@ class FileRunStoreTest {
         assertEquals("system instructions", sample["system_prompt"]?.jsonPrimitive?.content)
         assertEquals("task instructions", sample["task_prompt"]?.jsonPrimitive?.content)
         assertEquals(1, sample["turns"]?.jsonArray?.size)
-        assertEquals("3", sample["schema_version"]?.jsonPrimitive?.content)
+        assertEquals("5", sample["schema_version"]?.jsonPrimitive?.content)
         assertEquals("trajectory.jsonl", sample["trajectory_file"]?.jsonPrimitive?.content)
         assertFalse("trajectory" in sample)
         assertFalse(Files.exists(runDirectory.resolve("tasks/${taskId.value}/samples/001/output")))
@@ -195,7 +195,7 @@ class FileRunStoreTest {
         )
         assertEquals(
             "accepted",
-            sample["final_result"]?.jsonObject?.get("kind")?.jsonPrimitive?.content,
+            sample["outcome"]?.jsonObject?.get("result")?.jsonObject?.get("kind")?.jsonPrimitive?.content,
         )
     }
 
@@ -230,7 +230,7 @@ class FileRunStoreTest {
         val sample = readJson(
             runDirectory.resolve("tasks/${taskId.value}/samples/001/record.json"),
         )
-        assertEquals("accepted", sample["final_result"]?.jsonObject
+        assertEquals("accepted", sample["outcome"]?.jsonObject?.get("result")?.jsonObject
             ?.get("kind")?.jsonPrimitive?.content)
 
         assertFailsWith<IllegalStateException> { store.complete() }
@@ -317,23 +317,73 @@ class FileRunStoreTest {
     }
 
     @Test
+    fun savesEachOutcomeVariantWithoutParallelVerdictAndTerminationFields() = runBlocking {
+        val cases = listOf(
+            SampleOutcome.BudgetExhausted(SampleBudget.OUTPUT_TOKENS, "truncated") to
+                """{"kind":"budget_exhausted","limit":"output_tokens","reason":"truncated"}""",
+            SampleOutcome.BudgetExhausted(SampleBudget.AGENT_ITERATIONS, "iterations") to
+                """{"kind":"budget_exhausted","limit":"agent_iterations","reason":"iterations"}""",
+            SampleOutcome.BudgetExhausted(SampleBudget.TOOL_CALLS, "tools") to
+                """{"kind":"budget_exhausted","limit":"tool_calls","reason":"tools"}""",
+            SampleOutcome.BudgetExhausted(SampleBudget.WORKSPACE_TOOL_CALLS, "workspace") to
+                """{"kind":"budget_exhausted","limit":"workspace_tool_calls","reason":"workspace"}""",
+            SampleOutcome.ProviderFailure("provider unavailable") to
+                """{"kind":"provider_failure","reason":"provider unavailable"}""",
+            SampleOutcome.ExecutionFailure("execution failed") to
+                """{"kind":"execution_failure","reason":"execution failed"}""",
+            SampleOutcome.Evaluated(EvaluationResult.Accepted) to
+                """{"kind":"evaluated","result":{"kind":"accepted"}}""",
+            SampleOutcome.Evaluated(EvaluationResult.Rejected("semantic disagreement")) to
+                """{"kind":"evaluated","result":{"kind":"rejected","reason":"semantic disagreement"}}""",
+            SampleOutcome.Evaluated(EvaluationResult.NeedsReview("unresolved")) to
+                """{"kind":"evaluated","result":{"kind":"needs_review","reason":"unresolved"}}""",
+            SampleOutcome.Evaluated(EvaluationResult.InfrastructureFailure("Lean unavailable")) to
+                """{"kind":"evaluated","result":{"kind":"infrastructure_failure","reason":"Lean unavailable"}}""",
+            SampleOutcome.RepairLimitReached(EvaluationResult.Rejected("invalid proof")) to
+                """{"kind":"repair_limit","result":{"kind":"rejected","reason":"invalid proof"}}""",
+        )
+        val directory = temporaryDirectory.resolve("outcomes")
+        val store = FileRunStore(directory)
+        store.begin(specification(samplesPerTask = cases.size), listOf(taskId))
+        cases.forEachIndexed { index, (outcome, expected) ->
+            val truncated = outcome is SampleOutcome.BudgetExhausted && outcome.limit == SampleBudget.OUTPUT_TOKENS
+            store.save(record().copy(
+                sampleIndex = index + 1, outcome = outcome,
+                turns = if (truncated) listOf(TaskRunRecord.Turn(0, "task", "partial", null, null)) else emptyList(),
+            ))
+            val sample = readJson(directory.resolve("tasks/${taskId.value}/samples/${(index + 1).toString().padStart(3, '0')}/record.json"))
+            assertFalse("final_result" in sample)
+            assertFalse("termination" in sample)
+            assertEquals(Json.parseToJsonElement(expected), sample.getValue("outcome"))
+            if (truncated) assertEquals(kotlinx.serialization.json.JsonNull,
+                sample.getValue("turns").jsonArray.single().jsonObject.getValue("result"))
+        }
+        store.complete()
+        assertEquals("complete", readJson(directory.resolve("run.json")).getValue("status").jsonPrimitive.content)
+    }
+
+    @Test
     fun persistsFailedSampleTrajectoryWithoutCompletedTurns() = runBlocking {
         val runDirectory = temporaryDirectory.resolve("failed-sample")
         val store = FileRunStore(runDirectory)
-        val failure = EvaluationResult.InfrastructureFailure("tool call limit exceeded")
+        val reason = "tool call limit exceeded"
         val event = AgentTrajectoryEvent("AgentExecutionFailedEvent", 125,
-            buildJsonObject { put("message", JsonPrimitive(failure.reason)) })
+            buildJsonObject { put("message", JsonPrimitive(reason)) })
         val finalFile = TaskWorkspace.snapshotFile("Solution.lean", "theorem target : True := by fail")
         store.begin(specification(), listOf(taskId))
         store.save(record().copy(
-            turns = emptyList(), finalResult = failure, trajectory = listOf(event),
+            turns = emptyList(), trajectory = listOf(event),
+            outcome = SampleOutcome.BudgetExhausted(SampleBudget.TOOL_CALLS, reason),
             workspace = WorkspaceRecord("theorem_11", "a".repeat(64), emptyList(), listOf(finalFile)),
         ))
-        store.fail(failure.reason)
+        store.fail(reason)
         val sampleDirectory = runDirectory.resolve("tasks/${taskId.value}/samples/001")
         val sample = readJson(sampleDirectory.resolve("record.json"))
         assertEquals(0, sample.getValue("turns").jsonArray.size)
-        assertEquals("infrastructure_failure", sample.getValue("final_result").jsonObject.getValue("kind").jsonPrimitive.content)
+        val outcome = sample.getValue("outcome").jsonObject
+        assertEquals("budget_exhausted", outcome.getValue("kind").jsonPrimitive.content)
+        assertEquals("tool_calls", outcome.getValue("limit").jsonPrimitive.content)
+        assertEquals(reason, outcome.getValue("reason").jsonPrimitive.content)
         val savedEvent = readJsonLines(sampleDirectory.resolve(sample.getValue("trajectory_file").jsonPrimitive.content)).single()
         assertEquals(event.kind, savedEvent.getValue("kind").jsonPrimitive.content)
         assertEquals(event.details, savedEvent.getValue("details"))
@@ -456,7 +506,7 @@ class FileRunStoreTest {
                 result = EvaluationResult.Accepted,
             ),
         ),
-        finalResult = EvaluationResult.Accepted,
+        outcome = SampleOutcome.Evaluated(EvaluationResult.Accepted),
         trajectory = listOf(
             AgentTrajectoryEvent(
                 kind = "LLMCallStartingEvent",

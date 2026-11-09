@@ -1,5 +1,6 @@
 package run
 
+import ai.koog.prompt.executor.clients.LLMClientException
 import ai.koog.prompt.message.Message
 import ai.koog.prompt.message.MessagePart
 import ai.koog.prompt.message.ResponseMetaInfo
@@ -11,6 +12,7 @@ import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
+import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import kotlinx.coroutines.runBlocking
@@ -37,7 +39,7 @@ class TaskRunEngineTest {
                 EvaluationResult.Rejected("private semantic disagreement"), evidence, publicDiagnostic = null) })
         val record = engine.run(task, 1)
         assertEquals(1, executor.prompts.size)
-        assertIs<EvaluationResult.Rejected>(record.finalResult)
+        assertIs<EvaluationResult.Rejected>(assertIs<SampleOutcome.Evaluated>(record.outcome).result)
         assertEquals(evidence, record.turns.single().evaluationEvidence)
         assertTrue(executor.prompts.none { it.messages.toString().contains("AstridSpec") || it.messages.toString().contains("private semantic") })
     }
@@ -52,7 +54,7 @@ class TaskRunEngineTest {
                 if (submission == "accepted") EvaluationResult.Accepted else EvaluationResult.Rejected("retry")
             })
         val record = engine.run(task, 1)
-        assertEquals(EvaluationResult.Accepted, record.finalResult)
+        assertEquals(SampleOutcome.Evaluated(EvaluationResult.Accepted), record.outcome)
         assertEquals(listOf(0, 1, 2, 3), record.turns.map { it.repairTurn })
         assertEquals(4, executor.prompts.size)
     }
@@ -74,7 +76,7 @@ class TaskRunEngineTest {
 
             val record = engine.run(task, sampleIndex = 1)
 
-            assertEquals(EvaluationResult.Accepted, record.finalResult)
+            assertEquals(SampleOutcome.Evaluated(EvaluationResult.Accepted), record.outcome)
             assertEquals(task.manifest.taskId, record.taskId)
             assertEquals("System instructions.", record.systemPrompt)
             assertEquals("Task: ${task.manifest.taskId.value}", record.taskPrompt)
@@ -126,8 +128,11 @@ class TaskRunEngineTest {
 
         val record = engine.run(task, sampleIndex = 1, onEvent = { events += it })
 
-        val failure = assertIs<EvaluationResult.InfrastructureFailure>(record.finalResult)
-        assertContains(failure.reason, "output-token limit")
+        val budget = assertIs<SampleOutcome.BudgetExhausted>(record.outcome)
+        assertEquals(SampleBudget.OUTPUT_TOKENS, budget.limit)
+        assertContains(budget.reason, "output-token limit")
+        assertNull(record.turns.single().result)
+        assertNull(record.turns.single().evaluationEvidence)
         assertEquals(1, executor.prompts.size)
         assertEquals(1, record.turns.size)
         assertEquals(null, record.turns.single().submission)
@@ -164,7 +169,7 @@ class TaskRunEngineTest {
 
             val record = engine.run(task, sampleIndex = 1, onEvent = { events += it })
 
-            assertEquals(EvaluationResult.Accepted, record.finalResult)
+            assertEquals(SampleOutcome.Evaluated(EvaluationResult.Accepted), record.outcome)
             assertEquals(listOf(0, 1), record.turns.map { it.repairTurn })
             assertEquals(listOf("bad", "good"), record.turns.map { it.submission })
             assertEquals("Repair: Lean rejected the proof", record.turns[1].userMessage)
@@ -197,7 +202,7 @@ class TaskRunEngineTest {
 
             val record = engine.run(task, sampleIndex = 1)
 
-            assertIs<EvaluationResult.Rejected>(record.finalResult)
+            assertIs<SampleOutcome.RepairLimitReached>(record.outcome)
             assertEquals(listOf(0, 1), record.turns.map { it.repairTurn })
             assertEquals(2, executor.prompts.size)
         }
@@ -216,14 +221,14 @@ class TaskRunEngineTest {
 
             val record = engine.run(task, sampleIndex = 1)
 
-            assertIs<EvaluationResult.NeedsReview>(record.finalResult)
+            assertIs<EvaluationResult.NeedsReview>(assertIs<SampleOutcome.Evaluated>(record.outcome).result)
             assertEquals(1, record.turns.size)
             assertEquals(1, executor.prompts.size)
         }
     }
 
     @Test
-    fun recordsExecutorFailureAsInfrastructureFailure() {
+    fun recordsUnexpectedExecutorFailureSeparatelyFromEvaluation() {
         runBlocking {
             val task = createRunTask(temporaryDirectory)
             val executor = ScriptedPromptExecutor(emptyList())
@@ -231,7 +236,7 @@ class TaskRunEngineTest {
 
             val record = engine.run(task, sampleIndex = 1)
 
-            val failure = assertIs<EvaluationResult.InfrastructureFailure>(record.finalResult)
+            val failure = assertIs<SampleOutcome.ExecutionFailure>(record.outcome)
             assertEquals(
                 "agent execution failed: IllegalStateException: no scripted model reply remains",
                 failure.reason,
@@ -248,6 +253,50 @@ class TaskRunEngineTest {
                 "no scripted model reply remains",
             )
         }
+    }
+
+    @Test
+    fun providerFailureDuringRepairPreservesEarlierAssessmentWithoutReusingItsVerdict() = runBlocking {
+        val task = createRunTask(temporaryDirectory)
+        val executor = ScriptedPromptExecutor(listOf("bad", "provider failure")) {
+            if (it == "provider failure") throw IllegalStateException("client wrapper",
+                LLMClientException("synthetic", "provider unavailable"))
+            Message.Assistant(it, ResponseMetaInfo.Empty)
+        }
+        val record = createRunEngine(temporaryDirectory, executor,
+            assessSubmission = { _, _ -> EvaluationResult.Rejected("bad proof") }).run(task, 1)
+        val failure = assertIs<SampleOutcome.ProviderFailure>(record.outcome)
+        assertIs<EvaluationResult.Rejected>(record.turns.single().result)
+        assertEquals(2, executor.prompts.size)
+        assertTrue(failure.reason.isNotBlank())
+    }
+
+    @Test
+    fun evaluatedInfrastructureFailureRetainsItsVerdict() = runBlocking {
+        val task = createRunTask(temporaryDirectory)
+        val expected = EvaluationResult.InfrastructureFailure("Lean unavailable")
+        val executor = ScriptedPromptExecutor(listOf("proof", "unused"))
+        val record = createRunEngine(temporaryDirectory, executor,
+            assessSubmission = { _, _ -> expected }).run(task, 1)
+        assertEquals(SampleOutcome.Evaluated(expected), record.outcome)
+        assertEquals(1, executor.prompts.size)
+    }
+
+    @Test
+    fun truncationDuringRepairPreservesTheEarlierRejectedTurn() = runBlocking {
+        val task = createRunTask(temporaryDirectory)
+        val executor = ScriptedPromptExecutor(listOf("bad", "truncated")) {
+            Message.Assistant(it, ResponseMetaInfo.Empty, finishReason = if (it == "truncated") "length" else "stop")
+        }
+        var evaluations = 0
+        val record = createRunEngine(temporaryDirectory, executor,
+            assessSubmission = { _, _ -> evaluations++; EvaluationResult.Rejected("bad proof") }).run(task, 1)
+        val budget = assertIs<SampleOutcome.BudgetExhausted>(record.outcome)
+        assertEquals(SampleBudget.OUTPUT_TOKENS, budget.limit)
+        assertIs<EvaluationResult.Rejected>(record.turns.first().result)
+        assertNull(record.turns.last().result)
+        assertEquals(1, evaluations)
+        assertEquals(2, executor.prompts.size)
     }
 
     @Test
