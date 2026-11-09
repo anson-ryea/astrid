@@ -31,6 +31,7 @@ class FileRunStore(runDirectory: Path) : RunStore {
 
     private var activeSpecification: BenchmarkRunSpecification? = null
     private var selectedTaskIds: List<TaskId> = emptyList()
+    private var selectedTaskMetadata: Map<TaskId, RunTaskMetadata> = emptyMap()
     private val savedSamples = mutableSetOf<Pair<TaskId, Int>>()
     private var finished = false
     private var createdDirectory = false
@@ -39,12 +40,15 @@ class FileRunStore(runDirectory: Path) : RunStore {
     override suspend fun begin(
         specification: BenchmarkRunSpecification,
         taskIds: List<TaskId>,
+        taskMetadata: Map<TaskId, RunTaskMetadata>,
     ) {
         check(activeSpecification == null) { "run has already begun" }
         require(taskIds.isNotEmpty()) { "run must select at least one task" }
         require(taskIds.distinct().size == taskIds.size) {
             "selected task IDs must be unique"
         }
+        require(taskMetadata.keys.all { it in taskIds }) { "metadata contains unselected task IDs" }
+        selectedTaskMetadata = taskMetadata.toMap()
         val parent = requireNotNull(runDirectory.parent) {
             "run directory must have a parent"
         }
@@ -226,6 +230,16 @@ class FileRunStore(runDirectory: Path) : RunStore {
             "task_ids",
             JsonArray(taskIds.map { JsonPrimitive(it.value) }),
         )
+        put("task_metadata", buildJsonObject {
+            selectedTaskMetadata.toSortedMap(compareBy { it.value }).forEach { (taskId, metadata) ->
+                put(taskId.value, buildJsonObject {
+                    put("paper_id", JsonPrimitive(metadata.paperId))
+                    put("task_type", JsonPrimitive(metadata.taskType))
+                    put("condition", JsonPrimitive(metadata.condition))
+                    put("source_result_id", JsonPrimitive(metadata.sourceResultId))
+                })
+            }
+        })
     }
 
     private fun sampleJson(record: TaskRunRecord): JsonObject =

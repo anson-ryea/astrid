@@ -33,6 +33,7 @@ class BenchmarkRunner(
         store.begin(
             specification = engine.specification,
             taskIds = tasks.map { it.manifest.taskId },
+            taskMetadata = tasks.associate { it.manifest.taskId to RunTaskMetadata.from(it.manifest) },
         )
 
         try {

@@ -6,7 +6,8 @@ import domain.TaskId
 interface RunStore {
     suspend fun begin(
         specification: BenchmarkRunSpecification,
-        taskIds: List<TaskId>
+        taskIds: List<TaskId>,
+        taskMetadata: Map<TaskId, RunTaskMetadata> = emptyMap(),
     )
 
     suspend fun save(record: TaskRunRecord)
