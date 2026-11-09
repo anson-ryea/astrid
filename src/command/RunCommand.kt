@@ -41,6 +41,12 @@ import run.FileRunStore
 import run.JsonBenchmarkRunConfigReader
 import run.TaskRunEngine
 import run.TaskSelector
+import run.TaskSelection
+import domain.*
+import com.github.ajalt.clikt.parameters.options.multiple
+import com.github.ajalt.clikt.parameters.options.convert
+import com.github.ajalt.clikt.parameters.types.int
+import com.github.ajalt.clikt.parameters.types.restrictTo
 import run.RunEvent
 import run.RunPhase
 import run.LangfuseConfig
@@ -112,13 +118,19 @@ class RunCommand(
         .choice("auto" to RunConsoleMode.Auto, "live" to RunConsoleMode.Live, "plain" to RunConsoleMode.Plain)
         .default(RunConsoleMode.Auto)
 
+    private val taskIds by option("--task-id", help = "Select a frozen task; repeat to select several").convert { TaskId(it) }.multiple()
+    private val paperIds by option("--paper-id", help = "Select a paper; repeat to select several").convert { PaperId(it) }.multiple()
+    private val taskTypes by option("--task-type", help = "Select a task type; repeat to select several").int().restrictTo(min = 1).multiple()
+    private val conditions by option("--condition", help = "Select an experimental condition; repeat to select several").convert { ConditionId(it) }.multiple()
+
     override suspend fun run() {
         val startedAt = TimeSource.Monotonic.markNow()
         val datasetRoot = this.datasetRoot.toAbsolutePath().normalize()
         val environmentRoot = this.environmentRoot.toAbsolutePath().normalize()
         val evaluationRoot = this.evaluationRoot.toAbsolutePath().normalize()
         val runConfig = configReader.read(configPath)
-        val specification = runConfig.toSpecification()
+        val selection = TaskSelection(taskIds.toSet(), paperIds.toSet(), taskTypes.map(::TaskTypeId).toSet(), conditions.toSet())
+        val specification = runConfig.toSpecification().copy(selection = selection)
         val repository = FileTaskRepository(
             datasetRoot,
             JsonTaskManifestReader(),
@@ -129,7 +141,7 @@ class RunCommand(
             projectRoot.resolve("prompts"),
             evaluationRoot,
         ))).find(backendId)
-        val selector = TaskSelector(backend.evaluationKinds)
+        val selector = TaskSelector(backend.evaluationKinds, selection)
         val selected = selector.select(repository.findAll())
         check(selected.isNotEmpty()) {
             "no frozen tasks are available for backend ${backend.id}"

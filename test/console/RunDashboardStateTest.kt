@@ -84,7 +84,7 @@ class RunDashboardStateTest {
         assertEquals(0, state.rejectedSamples)
         assertEquals(outcomes.size, state.recentDiagnostics.size)
 
-        state = state.reduce(RunEvent.SampleFinished(taskId, 7,
+        state = state.reduce(RunEvent.SampleFinished(taskId, outcomes.size + 1,
             SampleOutcome.RepairLimitReached(EvaluationResult.Rejected("bad proof"))))
         assertEquals(1, state.rejectedSamples)
         assertEquals(budgets.size, state.budgetExhaustedSamples)

@@ -1,0 +1,27 @@
+{
+  "$schema": "../schemas/run-config-v1.schema.json",
+  "schema_version": 1,
+  "model": {
+    "id": "replace-with-model-id",
+    "context_length": null,
+    "max_output_tokens": 4096,
+    "supports_tools": true
+  },
+  "generation": {
+    "temperature": 0.2,
+    "top_p": null,
+    "top_k": null,
+    "seed": 42
+  },
+  "samples_per_task": 5,
+  "max_concurrent_tasks": 4,
+  "max_repair_turns": 1,
+  "max_agent_iterations": 80,
+  "max_tool_calls_per_attempt": 0,
+  "max_workspace_tool_calls_per_attempt": 20,
+  "limits": {
+    "sample_timeout": "PT10M",
+    "max_total_tokens_per_sample": 50000
+  },
+  "pricing": null
+}

@@ -22,6 +22,7 @@ data class AnalysisSummary(
     val taskMacroFinalRate: Double?,
     val paperMacroFinalRate: Double?,
     val passAtK: List<PassAtK>,
+    val resources: ResourceSummary,
 ) {
     val missingSamples: Long get() = expectedSamples - savedSamples
     val finalAccepted: Int get() = counts.getValue(SampleCategory.ACCEPTED)
@@ -65,7 +66,7 @@ class RunAnalyser {
                         passAtK(values.size, values.count { if (first) it.firstAttemptAccepted else it.category == SampleCategory.ACCEPTED }, k)
                     }.meanOrNull()
                     PassAtK(k, eligible.size, estimate(true), estimate(false))
-                })
+                }, ResourceSummary.from(samples))
         }
         val summaries = buildList {
             add(summary("overall", "all", run.taskIds))

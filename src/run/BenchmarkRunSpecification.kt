@@ -12,6 +12,10 @@ data class BenchmarkRunSpecification(
     val maxAgentIterations: Int?,
     val maxWorkspaceToolCallsPerAttempt: Int? = 0,
     val maxConcurrentTasks: Int = 4,
+    val generation: GenerationSettings = GenerationSettings(),
+    val limits: SampleLimits = SampleLimits(),
+    val pricing: TokenPricing? = null,
+    val selection: TaskSelection = TaskSelection(),
 ) {
     val workspaceToolsEnabled: Boolean
         get() = maxWorkspaceToolCallsPerAttempt != 0

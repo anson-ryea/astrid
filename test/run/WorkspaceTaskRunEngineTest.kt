@@ -217,6 +217,10 @@ class WorkspaceTaskRunEngineTest {
         val record = engine(executor, budget = 3, otherBudget = 1, otherTools = otherTools).run(task, 1)
         assertEquals(SampleOutcome.Evaluated(EvaluationResult.Accepted), record.outcome)
         assertEquals(1, lookup.calls)
+        assertEquals(4, record.resources!!.toolCalls)
+        assertEquals(3, record.resources!!.workspaceToolCalls)
+        assertEquals(2, record.resources!!.modelRequests)
+        assertTrue(record.resources!!.elapsedMs >= record.resources!!.modelMs)
         assertEquals(4, record.trajectory.count { it.kind == "ToolCallCompletedEvent" })
         assertTrue(executor.offeredTools.all { it.size == 6 })
     }

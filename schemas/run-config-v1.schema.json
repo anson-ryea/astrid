@@ -26,7 +26,12 @@
     "model": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "context_length", "max_output_tokens", "supports_tools"],
+      "required": [
+        "id",
+        "context_length",
+        "max_output_tokens",
+        "supports_tools"
+      ],
       "properties": {
         "id": {
           "type": "string",
@@ -35,7 +40,10 @@
           "description": "OpenRouter model ID."
         },
         "context_length": {
-          "type": ["integer", "null"],
+          "type": [
+            "integer",
+            "null"
+          ],
           "minimum": 1,
           "maximum": 9223372036854775807,
           "description": "Configured context length in tokens. Null selects OpenRouter's advertised maximum."
@@ -80,6 +88,95 @@
     "max_agent_iterations": {
       "$ref": "#/$defs/positiveLimit",
       "description": "Maximum model requests across all attempts in one sample. Null removes the local request cap."
+    },
+    "generation": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "temperature": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 2
+        },
+        "top_p": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        },
+        "top_k": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 2147483647
+        },
+        "seed": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 2147483647,
+          "description": "Base seed; sample s uses (base+s-1) mod 2147483648. Null defers to the provider."
+        }
+      }
+    },
+    "limits": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "sample_timeout": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "duration",
+          "description": "Finite ISO-8601 sample deadline, at least one millisecond, including preparation and assessment. Persistence and cleanup excluded."
+        },
+        "max_total_tokens_per_sample": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 9223372036854775807,
+          "description": "Cumulative provider-reported input+output usage. Checked between calls and on every response; a request can overshoot through input usage."
+        }
+      }
+    },
+    "pricing": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "input_usd_per_million": {
+          "type": "number",
+          "minimum": 0
+        },
+        "output_usd_per_million": {
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "input_usd_per_million",
+        "output_usd_per_million"
+      ]
     }
   },
   "allOf": [
@@ -88,28 +185,46 @@
         "properties": {
           "model": {
             "type": "object",
-            "properties": {"supports_tools": {"const": false}},
-            "required": ["supports_tools"]
+            "properties": {
+              "supports_tools": {
+                "const": false
+              }
+            },
+            "required": [
+              "supports_tools"
+            ]
           }
         },
-        "required": ["model"]
+        "required": [
+          "model"
+        ]
       },
       "then": {
         "properties": {
-          "max_tool_calls_per_attempt": {"const": 0},
-          "max_workspace_tool_calls_per_attempt": {"const": 0}
+          "max_tool_calls_per_attempt": {
+            "const": 0
+          },
+          "max_workspace_tool_calls_per_attempt": {
+            "const": 0
+          }
         }
       }
     }
   ],
   "$defs": {
     "nonNegativeLimit": {
-      "type": ["integer", "null"],
+      "type": [
+        "integer",
+        "null"
+      ],
       "minimum": 0,
       "maximum": 2147483647
     },
     "positiveLimit": {
-      "type": ["integer", "null"],
+      "type": [
+        "integer",
+        "null"
+      ],
       "minimum": 1,
       "maximum": 2147483647
     }

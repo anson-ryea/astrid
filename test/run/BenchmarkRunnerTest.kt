@@ -266,6 +266,13 @@ class BenchmarkRunnerTest {
         val run = Json.parseToJsonElement(Files.readString(runDirectory.resolve("run.json"))).jsonObject
         assertEquals("complete", run.getValue("status").jsonPrimitive.content)
         assertEquals("4", run.getValue("max_concurrent_tasks").jsonPrimitive.content)
+        val labels = run.getValue("task_metadata").jsonObject
+        for (task in tasks) {
+            val saved = labels.getValue(task.manifest.taskId.value).jsonObject
+            assertEquals(task.manifest.paperId.value, saved.getValue("paper_id").jsonPrimitive.content)
+            assertEquals(task.manifest.taskType.value.toString(), saved.getValue("task_type").jsonPrimitive.content)
+            assertEquals(task.manifest.condition.value, saved.getValue("condition").jsonPrimitive.content)
+        }
         for (task in tasks) {
             for (sample in 1..3) {
                 val directory = runDirectory.resolve("tasks/${task.manifest.taskId}/samples/${sample.toString().padStart(3, '0')}")
@@ -539,6 +546,7 @@ class BenchmarkRunnerTest {
         override suspend fun begin(
             specification: BenchmarkRunSpecification,
             taskIds: List<TaskId>,
+            taskMetadata: Map<TaskId, RunTaskMetadata>,
         ) {
             events += "begin"
             this.taskIds = taskIds

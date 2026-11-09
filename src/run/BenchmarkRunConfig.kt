@@ -16,6 +16,9 @@ data class BenchmarkRunConfig(
     val maxToolCallsPerAttempt: Int? = 0,
     val maxWorkspaceToolCallsPerAttempt: Int? = 0,
     val maxConcurrentTasks: Int = 4,
+    val generation: GenerationSettings = GenerationSettings(),
+    val limits: SampleLimits = SampleLimits(),
+    val pricing: TokenPricing? = null,
 ) {
     init {
         require(modelId.isNotBlank()) { "model ID must not be blank" }
@@ -59,5 +62,6 @@ data class BenchmarkRunConfig(
         maxAgentIterations = maxAgentIterations,
         maxWorkspaceToolCallsPerAttempt = maxWorkspaceToolCallsPerAttempt,
         maxConcurrentTasks = maxConcurrentTasks,
+        generation = generation, limits = limits, pricing = pricing,
     )
 }

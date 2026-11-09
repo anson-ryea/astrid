@@ -11,7 +11,6 @@ import ai.koog.prompt.dsl.prompt
 import ai.koog.prompt.executor.clients.LLMClientException
 import ai.koog.prompt.executor.model.PromptExecutor
 import ai.koog.prompt.message.MessagePart
-import ai.koog.prompt.params.LLMParams
 import ai.koog.utils.io.use
 import domain.BenchmarkTask
 import domain.EvaluationResult
@@ -20,12 +19,17 @@ import domain.TaskStatus
 import evaluation.TaskEvaluator
 import evaluation.TaskEvaluatorRegistry
 import kotlin.coroutines.cancellation.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runInterruptible
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.time.TimeSource
 import prompt.PromptRenderer
 import protocol.TaskProtocol
 import protocol.TaskProtocolRegistry
 import run.tools.WorkspaceTools
 import workspace.TaskWorkspaceFactory
 import workspace.TaskWorkspaceSession
+import kotlin.time.Duration.Companion.milliseconds
 
 /** Runs one independent task sample with separately configurable tool and repair limits. */
 class TaskRunEngine(
@@ -60,14 +64,33 @@ class TaskRunEngine(
             "task ${task.manifest.taskId} is not frozen"
         }
 
-        // Preparation failures are run errors, not model samples.
+        val resources = SampleResourceRecorder(specification.pricing, specification.generation.effectiveSeed(sampleIndex))
+        fun remainingMs() = specification.limits.timeout?.inWholeMilliseconds?.minus(resources.elapsedMs)?.coerceAtLeast(0)
         onEvent(RunEvent.PhaseChanged(task.manifest.taskId, sampleIndex, SamplePhase.Preparing))
-        val session = workspaceFactory?.prepare(task)?.create()
-        session.use { session ->
-            val record = runPrepared(task, sampleIndex, session, onEvent)
-            // The orchestrator durably saves the record while the workspace still exists.
+        var session: TaskWorkspaceSession? = null
+        var primaryFailure: Throwable? = null
+        try {
+            suspend fun prepare(): Boolean {
+                runInterruptible(Dispatchers.IO) { session = workspaceFactory?.prepare(task)?.create() }
+                return true
+            }
+            val remaining = remainingMs()
+            val prepared = if (remaining == null) prepare() else if (remaining == 0L) false
+                else withTimeoutOrNull(remaining.milliseconds) { prepare() } ?: false
+            val record = if (prepared) runPrepared(task, sampleIndex, session, onEvent, resources)
+                else TaskRunRecord(task.manifest.taskId, sampleIndex, "", "", emptyList(),
+                    SampleOutcome.BudgetExhausted(SampleBudget.SAMPLE_TIME, "sample deadline exhausted during preparation"),
+                    workspace = session?.workspace?.record(), resources = resources.snapshot())
+            // Save before removing the workspace; persistence and cleanup are outside the experimental deadline.
             saveRecord(record)
             return record
+        } catch (failure: Throwable) {
+            primaryFailure = failure
+            throw failure
+        } finally {
+            try { session?.close() } catch (cleanup: Throwable) {
+                if (primaryFailure == null) throw cleanup else primaryFailure.addSuppressed(cleanup)
+            }
         }
     }
 
@@ -76,6 +99,7 @@ class TaskRunEngine(
         sampleIndex: Int,
         session: TaskWorkspaceSession?,
         onEvent: suspend (RunEvent) -> Unit,
+        resources: SampleResourceRecorder,
     ): TaskRunRecord {
         // Keep the original failure even if Koog wraps an exception thrown inside its strategy.
         var eventDeliveryFailure: Exception? = null
@@ -104,10 +128,21 @@ class TaskRunEngine(
         val trajectory = KoogTrajectoryRecorder()
         var outcome: SampleOutcome? = null
         // Capture explicit limits before Koog can wrap their exceptions.
+        fun exhaust(limit: SampleBudget, reason: String): Nothing {
+            outcome = SampleOutcome.BudgetExhausted(limit, reason)
+            throw IllegalStateException(reason)
+        }
         fun enforceBudget(available: Boolean, limit: SampleBudget, reason: String) {
-            if (!available) {
-                outcome = SampleOutcome.BudgetExhausted(limit, reason)
-                throw IllegalStateException(reason)
+            if (!available) exhaust(limit, reason)
+        }
+
+        val measuredExecutor = MeasuredPromptExecutor(promptExecutor, specification, sampleIndex, resources, ::exhaust)
+
+        fun checkResponseBudget() {
+            specification.limits.maxTotalTokens?.let { limit ->
+                resources.requireTotalUsage()
+                enforceBudget(resources.total <= limit, SampleBudget.TOTAL_TOKENS,
+                    "provider-reported usage exceeded the sample total-token budget")
             }
         }
 
@@ -133,6 +168,7 @@ class TaskRunEngine(
                         appendPrompt { user(message) }
                         requestLLM()
                     }
+                    checkResponseBudget()
                     var toolCalls =
                         reply.parts.filterIsInstance<MessagePart.Tool.Call>()
                     var usedToolCalls = 0L
@@ -153,7 +189,13 @@ class TaskRunEngine(
 
                         if (specification.maxWorkspaceToolCallsPerAttempt != null) usedWorkspaceToolCalls += workspaceCalls
                         if (specification.maxToolCallsPerAttempt != null) usedToolCalls += otherCalls
-                        val results = toolCalls.map { environment.executeTool(it) }
+                        val results = toolCalls.map { call ->
+                            resources.toolCalls++
+                            if (call.tool in workspaceToolNames) resources.workspaceToolCalls++
+                            val started = TimeSource.Monotonic.markNow()
+                            try { environment.executeTool(call) }
+                            finally { resources.toolMs += started.elapsedNow().inWholeMilliseconds }
+                        }
                         consumeIteration()
                         reply = llm.writeSession {
                             appendPrompt {
@@ -161,6 +203,7 @@ class TaskRunEngine(
                             }
                             requestLLM()
                         }
+                        checkResponseBudget()
                         toolCalls =
                             reply.parts.filterIsInstance<MessagePart.Tool.Call>()
                     }
@@ -176,7 +219,10 @@ class TaskRunEngine(
                             null to null
                         } else {
                             phaseChanged(SamplePhase.Evaluating)
-                            session?.assessDetailed() ?: assess(task, protocol, evaluator, response)
+                            val started = TimeSource.Monotonic.markNow()
+                            try { runInterruptible(Dispatchers.IO) {
+                                session?.assessDetailed() ?: assess(task, protocol, evaluator, response)
+                            } } finally { resources.evaluationMs += started.elapsedNow().inWholeMilliseconds }
                         }
                     val result = report?.result
 
@@ -215,9 +261,7 @@ class TaskRunEngine(
             val config = AIAgentConfig(
                 prompt = prompt(
                     "benchmark-${task.manifest.taskId.value}-$sampleIndex",
-                    params = LLMParams(
-                        maxTokens = specification.model.maxOutputTokens?.toInt(),
-                    ),
+                    params = specification.generation.params(sampleIndex, specification.model.maxOutputTokens?.toInt()),
                 ) {
                     system(systemText)
                 },
@@ -226,19 +270,25 @@ class TaskRunEngine(
                 maxAgentIterations = 3,
             )
 
-            AIAgent(
-                promptExecutor = promptExecutor,
-                agentConfig = config,
-                strategy = strategy,
-                toolRegistry = activeToolRegistry,
-            ) {
-                install(Tracing) { addMessageProcessor(trajectory) }
-                langfuse?.let { tracing ->
-                    install(OpenTelemetry) { tracing.configure(this, task, sampleIndex, specification.model.id) }
-                }
-            }.use { agent -> agent.run(taskPrompt) }
+            suspend fun execute(): SampleOutcome {
+                AIAgent(
+                    promptExecutor = measuredExecutor,
+                    agentConfig = config,
+                    strategy = strategy,
+                    toolRegistry = activeToolRegistry,
+                ) {
+                    install(Tracing) { addMessageProcessor(trajectory) }
+                    langfuse?.let { tracing ->
+                        install(OpenTelemetry) { tracing.configure(this, task, sampleIndex, specification.model.id) }
+                    }
+                }.use { agent -> agent.run(taskPrompt) }
 
-            checkNotNull(outcome) { "agent completed without a sample outcome" }
+                return checkNotNull(outcome) { "agent completed without a sample outcome" }
+            }
+            val remaining = specification.limits.timeout?.inWholeMilliseconds?.minus(resources.elapsedMs)?.coerceAtLeast(0)
+            val completed = if (remaining == null) execute() else if (remaining == 0L) null
+                else withTimeoutOrNull(remaining.milliseconds) { execute() }
+            completed ?: SampleOutcome.BudgetExhausted(SampleBudget.SAMPLE_TIME, "sample deadline exhausted")
         } catch (failure: CancellationException) {
             throw failure
         } catch (failure: Exception) {
@@ -264,6 +314,7 @@ class TaskRunEngine(
             outcome = finalOutcome,
             trajectory = trajectory.events,
             workspace = workspace?.record(),
+            resources = resources.snapshot(),
         )
     }
 

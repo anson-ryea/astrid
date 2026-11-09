@@ -1,5 +1,8 @@
 package run
 
+import kotlin.time.Duration
+import kotlinx.serialization.json.double
+import kotlinx.serialization.json.doubleOrNull
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlinx.serialization.json.Json
@@ -45,7 +48,7 @@ class JsonBenchmarkRunConfigReader {
                 "samples_per_task",
                 "max_repair_turns",
                 "max_agent_iterations",
-            ) + document.keys.intersect(setOf("\$schema", "max_tool_calls_per_attempt", "max_workspace_tool_calls_per_attempt", "max_concurrent_tasks")),
+            ) + document.keys.intersect(setOf("\$schema", "max_tool_calls_per_attempt", "max_workspace_tool_calls_per_attempt", "max_concurrent_tasks", "generation", "limits", "pricing")),
         )
         require(document.requiredInt("schema_version") == 1) {
             "unsupported run config schema version"
@@ -75,10 +78,42 @@ class JsonBenchmarkRunConfigReader {
             maxWorkspaceToolCallsPerAttempt = if ("max_workspace_tool_calls_per_attempt" in document) {
                 document.requiredNullableInt("max_workspace_tool_calls_per_attempt")
             } else 0,
+            generation = document.optionalObject("generation")?.let { value ->
+                value.requireAllowed("generation", setOf("temperature", "top_p", "top_k", "seed"))
+                GenerationSettings(value.optionalDouble("temperature"), value.optionalDouble("top_p"),
+                    value.optionalInt("top_k"), value.optionalInt("seed"))
+            } ?: GenerationSettings(),
+            limits = document.optionalObject("limits")?.let { value ->
+                value.requireAllowed("limits", setOf("sample_timeout", "max_total_tokens_per_sample"))
+                SampleLimits(value["sample_timeout"]?.takeUnless { it == JsonNull }?.let {
+                    Duration.parseIsoString(value.requiredString("sample_timeout"))
+                }, if ("max_total_tokens_per_sample" in value) value.requiredNullableLong("max_total_tokens_per_sample") else null)
+            } ?: SampleLimits(),
+            pricing = document.optionalObject("pricing")?.let { value ->
+                value.requireFields("pricing", setOf("input_usd_per_million", "output_usd_per_million"))
+                TokenPricing(requireNotNull(value.optionalDouble("input_usd_per_million")),
+                    requireNotNull(value.optionalDouble("output_usd_per_million")))
+            },
             maxConcurrentTasks = if ("max_concurrent_tasks" in document) {
                 document.requiredInt("max_concurrent_tasks")
             } else 4,
         )
+    }
+
+    private fun JsonObject.optionalObject(name: String): JsonObject? {
+        if (name !in this || this[name] == JsonNull) return null
+        return this[name] as? JsonObject ?: throw IllegalArgumentException("'$name' must be an object or null")
+    }
+    private fun JsonObject.optionalInt(name: String): Int? =
+        if (name !in this || this[name] == JsonNull) null else requiredInt(name)
+    private fun JsonObject.optionalDouble(name: String): Double? {
+        if (name !in this || this[name] == JsonNull) return null
+        val value = this[name] as? JsonPrimitive
+        require(value != null && !value.isString && value.doubleOrNull?.isFinite() == true) { "'$name' must be a finite number" }
+        return value.double
+    }
+    private fun JsonObject.requireAllowed(label: String, allowed: Set<String>) {
+        require((keys - allowed).isEmpty()) { "$label has unknown fields: ${(keys - allowed).sorted().joinToString()}" }
     }
 
     private fun JsonObject.requireFields(label: String, expected: Set<String>) {

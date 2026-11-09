@@ -11,6 +11,7 @@ import java.nio.file.Path
 import kotlinx.serialization.json.*
 import run.RunTaskMetadata
 import run.SampleBudget
+import run.SampleResources
 
 /** Reads summaries only: trajectories, outputs, prompts and private specifications are never interpreted. */
 class SavedRunReader {
@@ -65,6 +66,7 @@ class SavedRunReader {
         }
         val warnings = buildList {
             if (status != "complete") add("Run is $status; saved-sample rates are provisional. Missing samples are reported separately.")
+            if (samples.any { it.resources == null }) add("Some samples have no normalised resource accounting; resource totals are unavailable for incomplete coverage. Historical trajectories are not used to guess usage.")
             if (samples.any { it.schemaVersion <= 3 }) add("Legacy sample schemas 1–3 cannot distinguish historical infrastructure, provider and budget failures; no diagnostic-text inference is applied.")
             if (metadata.size < taskIds.size) add("${taskIds.size - metadata.size} task(s) lack analysis metadata; their breakdown labels are unknown. Supply --dataset-root to enrich older runs.")
             if (metadata.values.any { it.source == "current_dataset" }) add("Some labels come from the current dataset checkout, not a historical snapshot; they do not establish experiment provenance.")
@@ -83,7 +85,7 @@ class SavedRunReader {
 
     private fun readSample(value: JsonObject): SavedSample {
         val version = value.int("schema_version")
-        require(version in 1..5) { "unsupported sample schema version: $version" }
+        require(version in 1..6) { "unsupported sample schema version: $version" }
         val taskId = TaskId(value.string("task_id")).value
         val sampleIndex = value.int("sample_index")
         val turns = value.array("turns").mapIndexed { index, turn ->
@@ -98,7 +100,7 @@ class SavedRunReader {
         }
         var budget: SampleBudget? = null
         val category = when (version) {
-            5 -> {
+            5, 6 -> {
                 val outcome = value.obj("outcome")
                 when (outcome.string("kind")) {
                     "evaluated", "repair_limit" -> {
@@ -159,7 +161,14 @@ class SavedRunReader {
         return SavedSample(taskId, sampleIndex, version, category, budget,
             turns.firstOrNull() == SampleCategory.ACCEPTED,
             turns.firstOrNull()?.let { it !in setOf(SampleCategory.EVALUATOR_FAILURE, SampleCategory.LEGACY_INFRASTRUCTURE_FAILURE) } ?: false,
-            (turns.size - 1).coerceAtLeast(0))
+            (turns.size - 1).coerceAtLeast(0),
+            if (version >= 6) value["resources"].let {
+                require(it != null) { "missing resources field" }
+                if (it == JsonNull) null else {
+                    require(it is JsonObject) { "resources must be an object or null" }
+                    SampleResources.fromJson(it)
+                }
+            } else null)
     }
 
     private fun verdict(value: JsonElement?, legacy: Boolean): SampleCategory {

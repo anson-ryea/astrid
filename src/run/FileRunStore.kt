@@ -205,6 +205,27 @@ class FileRunStore(runDirectory: Path) : RunStore {
         put("status", JsonPrimitive(status))
         failureReason?.let { put("failure_reason", JsonPrimitive(it)) }
         put("model", json.encodeToJsonElement(specification.model))
+        put("generation", buildJsonObject {
+            put("temperature", JsonPrimitive(specification.generation.temperature))
+            put("top_p", JsonPrimitive(specification.generation.topP))
+            put("top_k", JsonPrimitive(specification.generation.topK))
+            put("seed", JsonPrimitive(specification.generation.seed))
+            put("seed_policy", JsonPrimitive("base_plus_sample_index_minus_one_mod_2147483648"))
+        })
+        put("limits", buildJsonObject {
+            put("sample_timeout", specification.limits.timeout?.let { JsonPrimitive(it.toIsoString()) } ?: JsonNull)
+            put("max_total_tokens_per_sample", JsonPrimitive(specification.limits.maxTotalTokens))
+        })
+        put("pricing", specification.pricing?.let { pricing -> buildJsonObject {
+            put("input_usd_per_million", JsonPrimitive(pricing.inputUsdPerMillion))
+            put("output_usd_per_million", JsonPrimitive(pricing.outputUsdPerMillion))
+        } } ?: JsonNull)
+        put("selection", buildJsonObject {
+            put("task_ids", JsonArray(specification.selection.taskIds.map { it.value }.sorted().map(::JsonPrimitive)))
+            put("paper_ids", JsonArray(specification.selection.paperIds.map { it.value }.sorted().map(::JsonPrimitive)))
+            put("task_types", JsonArray(specification.selection.taskTypes.map { it.value }.sorted().map(::JsonPrimitive)))
+            put("conditions", JsonArray(specification.selection.conditions.map { it.value }.sorted().map(::JsonPrimitive)))
+        })
         put("samples_per_task", JsonPrimitive(specification.samplesPerTask))
         put(
             "max_repair_turns",
@@ -244,13 +265,14 @@ class FileRunStore(runDirectory: Path) : RunStore {
 
     private fun sampleJson(record: TaskRunRecord): JsonObject =
         buildJsonObject {
-            put("schema_version", JsonPrimitive(5))
+            put("schema_version", JsonPrimitive(6))
             put("task_id", JsonPrimitive(record.taskId.value))
             put("sample_index", JsonPrimitive(record.sampleIndex))
             put("system_prompt", JsonPrimitive(record.systemPrompt))
             put("task_prompt", JsonPrimitive(record.taskPrompt))
             put("turns", JsonArray(record.turns.map(::turnJson)))
             put("outcome", outcomeJson(record.outcome))
+            put("resources", record.resources?.toJson() ?: JsonNull)
             put("trajectory_file", JsonPrimitive("trajectory.jsonl"))
             record.workspace?.let { workspace ->
                 put("workspace", buildJsonObject {

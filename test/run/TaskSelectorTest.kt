@@ -55,6 +55,23 @@ class TaskSelectorTest {
     }
 
     @Test
+    fun combinesOrWithinDimensionsAndAndBetweenDimensionsAndRejectsIneligibleRequests() {
+        val a = task("task_1.1_theorem_1", TaskStatus.FROZEN, "lean_kernel")
+        val b = task("task_1.2_theorem_2", TaskStatus.FROZEN, "lean_kernel").let { it.copy(manifest = it.manifest.copy(
+            condition = ConditionId("paper_evidence"), taskType = TaskTypeId(3))) }
+        val candidate = task("task_1.3_theorem_3", TaskStatus.CANDIDATE_PENDING_INDEPENDENT_REVIEW, "lean_kernel")
+        val selection = TaskSelection(taskIds = setOf(a.manifest.taskId, b.manifest.taskId),
+            paperIds = setOf(PaperId("paper_1")), taskTypes = setOf(TaskTypeId(3)), conditions = setOf(ConditionId("paper_evidence")))
+        assertEquals(listOf(b), TaskSelector(setOf(EvaluationKind("lean_kernel")), selection).select(listOf(a, b, candidate)))
+        assertFailsWith<IllegalArgumentException> {
+            TaskSelector(setOf(EvaluationKind("lean_kernel")), TaskSelection(taskIds = setOf(candidate.manifest.taskId))).select(listOf(a, candidate))
+        }
+        assertFailsWith<IllegalArgumentException> {
+            TaskSelector(setOf(EvaluationKind("lean_kernel")), TaskSelection(paperIds = setOf(PaperId("paper_99")))).select(listOf(a))
+        }
+    }
+
+    @Test
     fun rejectsEmptyEvaluationKinds() {
         assertFailsWith<IllegalArgumentException> {
             TaskSelector(emptySet())

@@ -50,6 +50,7 @@ object AnalysisRenderer {
         put("mean_recorded_repair_turns", JsonPrimitive(s.meanRecordedRepairTurns))
         put("task_macro_final_acceptance_rate", JsonPrimitive(s.taskMacroFinalRate))
         put("paper_macro_final_acceptance_rate", JsonPrimitive(s.paperMacroFinalRate))
+        put("resources", s.resources.values)
         put("pass_at_k", JsonArray(s.passAtK.map { estimate -> buildJsonObject {
             put("k", JsonPrimitive(estimate.k)); put("eligible_tasks", JsonPrimitive(estimate.eligibleTasks))
             put("first_attempt", JsonPrimitive(estimate.firstAttempt)); put("final", JsonPrimitive(estimate.final))
@@ -74,6 +75,11 @@ object AnalysisRenderer {
             appendLine("Outcomes: " + total.counts.entries.joinToString(", ") { "${it.key.value}=${it.value}" })
             appendLine("Budget limits: " + total.budgets.entries.joinToString(", ") { "${it.key}=${it.value}" })
             for (estimate in total.passAtK) appendLine("pass@${estimate.k}: first=${percent(estimate.firstAttempt)}, final=${percent(estimate.final)} (${estimate.eligibleTasks}/${total.taskCount} eligible tasks)")
+            val resources = total.resources.values
+            fun resource(name: String) = resources[name]?.takeUnless { it == JsonNull }?.jsonPrimitive?.content ?: "n/a"
+            appendLine("Resources: ${resource("samples_with_resources")}/${total.savedSamples} samples measured; requests=${resource("model_requests")}, tools=${resource("tool_calls")}, elapsed(sum)=${resource("elapsed_ms")} ms")
+            appendLine("Tokens: input=${resource("input_tokens")}, output=${resource("output_tokens")}, total=${resource("total_tokens")}; known total subtotal=${resource("known_total_tokens")}; ${resource("samples_with_complete_total_usage")}/${total.savedSamples} samples have complete total usage")
+            appendLine("Cost USD: billed=n/a; estimated=${resource("estimated_cost_usd")} (configured prices, no cache discounts)")
             run.warnings.forEach { appendLine("Note: $it") }
             appendLine("Breakdowns (accepted/saved; missing samples shown separately):")
             analysis.summaries.drop(1).forEach { s ->
@@ -91,7 +97,7 @@ object AnalysisRenderer {
         val header = listOf("run_directory", "model_id", "run_status", "dimension", "label", "tasks", "complete_tasks", "expected_samples", "saved_samples", "missing_samples") +
             SampleCategory.entries.map { it.value } + run.SampleBudget.entries.map { "budget_${it.manifestValue}" } +
             listOf("first_attempt_accepted", "first_attempt_assessed", "first_attempt_acceptance_rate", "final_acceptance_rate", "repaired_accepted", "recorded_repair_turns", "samples_with_recorded_repairs", "mean_recorded_repair_turns", "task_macro_final_acceptance_rate", "paper_macro_final_acceptance_rate") +
-            ks.flatMap { listOf("first_pass_at_$it", "final_pass_at_$it", "pass_at_${it}_eligible_tasks") } + listOf("denominator_policy", "pass_at_k_policy", "notes")
+            ks.flatMap { listOf("first_pass_at_$it", "final_pass_at_$it", "pass_at_${it}_eligible_tasks") } + ResourceSummary.columns.map { "resources_$it" } + listOf("denominator_policy", "pass_at_k_policy", "notes")
         return buildString {
             appendLine(header.joinToString(",", transform = ::csvCell))
             analyses.forEach { analysis -> analysis.summaries.forEach { s ->
@@ -101,6 +107,7 @@ object AnalysisRenderer {
                     listOf(s.firstAttemptAccepted, s.firstAttemptAssessed, s.firstAttemptRate, s.finalRate, s.repairedAccepted,
                         s.recordedRepairTurns, s.samplesWithRecordedRepairs, s.meanRecordedRepairTurns, s.taskMacroFinalRate, s.paperMacroFinalRate) +
                     ks.flatMap { k -> s.passAtK.find { it.k == k }.let { listOf(it?.firstAttempt, it?.final, it?.eligibleTasks) } } +
+                    ResourceSummary.columns.map { s.resources.values[it]?.takeUnless { value -> value == JsonNull }?.jsonPrimitive?.content } +
                     listOf(denominatorPolicy, passPolicy, analysis.run.warnings.joinToString(" "))
                 appendLine(values.joinToString(",") { csvCell(it?.toString().orEmpty()) })
             } }

@@ -445,6 +445,28 @@ class RunCommandTest {
         assertContains(failure.message.orEmpty(), "live")
     }
 
+    @Test
+    fun acceptsSelectionOptionsAndRejectsUnknownSelectionsBeforeProviderAccess() = runBlocking {
+        val checkout = copyCheckout(temporaryDirectory, "proof")
+        val id = SimpleTestDataset.task("proof").manifest.taskId.value
+        var keyCalls = 0
+        fun command() = RunCommand(SimpleTestDataset.projectRoot, apiKeyProvider = {
+            keyCalls++; error("selected tasks reached provider boundary")
+        })
+        val base = listOf(writeConfig(validConfig).toString(), checkout.toString(), temporaryDirectory.resolve("output").toString(), "--ui=plain")
+        val selected = assertFailsWith<IllegalStateException> {
+            command().parse(base + listOf("--task-id", id, "--paper-id", "paper_1", "--task-type", "2", "--condition", "paper_evidence"))
+        }
+        assertContains(selected.message.orEmpty(), "provider boundary")
+        assertEquals(1, keyCalls)
+        for (options in listOf(listOf("--paper-id", "paper_99"), listOf("--task-type", "999"),
+            listOf("--condition", "missing"), listOf("--task-id", "task_1.99_missing"))) {
+            assertFailsWith<IllegalArgumentException> { command().parse(base + options) }
+        }
+        assertEquals(1, keyCalls)
+        assertFalse(Files.exists(temporaryDirectory.resolve("output")))
+    }
+
     private fun writeFrozenProofManifest(checkout: Path = temporaryDirectory) {
         val source = SimpleTestDataset.task("proof")
         val taskDirectory = checkout.resolve("dataset/paper_1/tasks/${source.manifest.taskId}")

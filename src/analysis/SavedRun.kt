@@ -4,6 +4,7 @@ import java.nio.file.Path
 import kotlinx.serialization.json.JsonObject
 import run.RunTaskMetadata
 import run.SampleBudget
+import run.SampleResources
 
 /** Legacy infrastructure outcomes deliberately retain their historical ambiguity. */
 enum class SampleCategory(val value: String) {
@@ -22,6 +23,7 @@ data class SavedSample(
     val firstAttemptAccepted: Boolean,
     val firstAttemptAssessed: Boolean,
     val recordedRepairTurns: Int,
+    val resources: SampleResources? = null,
 )
 
 data class AnalysisTaskMetadata(val labels: RunTaskMetadata, val source: String)

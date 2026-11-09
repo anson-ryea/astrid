@@ -89,7 +89,7 @@ class FileRunStoreTest {
         store.save(base.copy(turns = listOf(base.turns.single().copy(evaluationEvidence = evidence))))
         store.complete()
         val sample = readJson(directory.resolve("tasks/${taskId.value}/samples/001/record.json"))
-        assertEquals("5", sample.getValue("schema_version").jsonPrimitive.content)
+        assertEquals("6", sample.getValue("schema_version").jsonPrimitive.content)
         val saved = sample.getValue("turns").jsonArray.single().jsonObject.getValue("evaluation_evidence").jsonObject
         assertEquals("a".repeat(64), saved.getValue("contract_sha256").jsonPrimitive.content)
         assertEquals("proved", saved.getValue("obligations").jsonArray.single().jsonObject.getValue("refutation").jsonPrimitive.content)
@@ -177,7 +177,7 @@ class FileRunStoreTest {
         assertEquals("system instructions", sample["system_prompt"]?.jsonPrimitive?.content)
         assertEquals("task instructions", sample["task_prompt"]?.jsonPrimitive?.content)
         assertEquals(1, sample["turns"]?.jsonArray?.size)
-        assertEquals("5", sample["schema_version"]?.jsonPrimitive?.content)
+        assertEquals("6", sample["schema_version"]?.jsonPrimitive?.content)
         assertEquals("trajectory.jsonl", sample["trajectory_file"]?.jsonPrimitive?.content)
         assertFalse("trajectory" in sample)
         assertFalse(Files.exists(runDirectory.resolve("tasks/${taskId.value}/samples/001/output")))
