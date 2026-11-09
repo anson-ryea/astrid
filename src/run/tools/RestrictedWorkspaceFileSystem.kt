@@ -2,15 +2,16 @@ package run.tools
 
 import ai.koog.rag.base.files.FileMetadata
 import ai.koog.rag.base.files.FileSystemProvider
-import java.nio.file.Files
-import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import kotlinx.io.Buffer
 import kotlinx.io.Sink
 import kotlinx.io.Source
 import workspace.TaskWorkspace
+import java.nio.file.Files
+import java.nio.file.LinkOption.NOFOLLOW_LINKS
 
 /** Koog sees virtual absolute paths, never the host filesystem or its temporary paths. */
-internal class RestrictedWorkspaceFileSystem(private val workspace: TaskWorkspace) : FileSystemProvider.ReadWrite<String> {
+internal class RestrictedWorkspaceFileSystem(private val workspace: TaskWorkspace) :
+    FileSystemProvider.ReadWrite<String> {
     override fun fromAbsolutePathString(path: String): String {
         val relative = relative(path)
         return if (relative.isEmpty()) ROOT else "$ROOT/$relative"
@@ -51,6 +52,7 @@ internal class RestrictedWorkspaceFileSystem(private val workspace: TaskWorkspac
             relative in files -> FileMetadata.FileType.File
             relative.isEmpty() || relative == "scratch" || files.any { it.startsWith("$relative/") } ->
                 FileMetadata.FileType.Directory
+
             else -> return null
         }
         val hostPath = workspace.resolve(relative, directory = type == FileMetadata.FileType.Directory)
@@ -92,13 +94,16 @@ internal class RestrictedWorkspaceFileSystem(private val workspace: TaskWorkspac
     override suspend fun delete(path: String): Unit = unsupported()
     override suspend fun outputStream(path: String, append: Boolean): Sink = unsupported()
 
-    private fun unsupported(): Nothing = throw UnsupportedOperationException("workspace supports only bounded text writes")
+    private fun unsupported(): Nothing =
+        throw UnsupportedOperationException("workspace supports only bounded text writes")
 
     private fun relative(path: String): String {
         val absolute = path.removeSuffix("/")
         require(absolute == ROOT || absolute.startsWith("$ROOT/")) { "path must be inside $ROOT" }
         val relative = absolute.removePrefix(ROOT).removePrefix("/")
-        require(relative.isEmpty() || (safePath.matches(relative) && relative.split('/').none { it == "." || it == ".." })) {
+        require(
+            relative.isEmpty() || (safePath.matches(relative) && relative.split('/').none { it == "." || it == ".." })
+        ) {
             "invalid workspace path"
         }
         return relative

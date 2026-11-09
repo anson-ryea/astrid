@@ -25,10 +25,12 @@ class LangfuseConfig private constructor(
                 "Langfuse requires both LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY; set LANGFUSE_ENABLED=false to disable export"
             }
             val host = (setting("LANGFUSE_HOST") ?: setting("LANGFUSE_BASE_URL")
-                ?: "https://cloud.langfuse.com").trimEnd('/')
+            ?: "https://cloud.langfuse.com").trimEnd('/')
             val uri = runCatching { URI(host) }.getOrNull()
-            require(uri != null && uri.scheme in listOf("http", "https") && !uri.host.isNullOrBlank()
-                && uri.rawUserInfo == null && uri.rawQuery == null && uri.rawFragment == null) {
+            require(
+                uri != null && uri.scheme in listOf("http", "https") && !uri.host.isNullOrBlank()
+                        && uri.rawUserInfo == null && uri.rawQuery == null && uri.rawFragment == null
+            ) {
                 "LANGFUSE_HOST must be an absolute HTTP(S) base URL without credentials, query or fragment"
             }
             return LangfuseConfig(host, publicKey, secretKey, boolean("LANGFUSE_CAPTURE_CONTENT", true))

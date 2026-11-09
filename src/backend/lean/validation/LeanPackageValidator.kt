@@ -6,19 +6,16 @@ import backend.lean.evaluation.LeanProcess
 import backend.lean.evaluation.LeanProcessResult
 import backend.lean.evaluation.LeanSemanticSourceBuilder
 import backend.lean.workspace.LeanContextReader
-import dataset.HashCalculator
 import dataset.JsonTaskManifestReader
 import dataset.TaskPackageVerifier
 import domain.BenchmarkTask
 import domain.EvaluationReport
 import domain.EvaluationResult
-import domain.TaskId
-import java.nio.file.Files
-import java.nio.file.Path
+import hashing.HashCalculator
 import kotlinx.serialization.json.*
 import workspace.TaskWorkspaceFactory
-
-data class LeanPackageValidation(val taskId: TaskId, val report: EvaluationReport)
+import java.nio.file.Files
+import java.nio.file.Path
 
 /** Offline Lean curation using the same isolated evaluators as benchmark submissions. */
 class LeanPackageValidator(
@@ -26,7 +23,10 @@ class LeanPackageValidator(
     private val profiles: LeanValidationProfileReader,
     private val processFactory: (Path) -> LeanProcess = { LeanLakeProcess(it, inheritLeanPath = false) },
 ) {
-    fun validateAll(tasks: List<BenchmarkTask>, onResult: (LeanPackageValidation) -> Unit = {}): List<LeanPackageValidation> {
+    fun validateAll(
+        tasks: List<BenchmarkTask>,
+        onResult: (LeanPackageValidation) -> Unit = {}
+    ): List<LeanPackageValidation> {
         require(tasks.isNotEmpty()) { "dataset contains no selected tasks" }
         require(tasks.map { it.manifest.taskId }.distinct().size == tasks.size) { "duplicate task identifiers" }
         val byId = tasks.associateBy { it.manifest.taskId }
@@ -37,15 +37,18 @@ class LeanPackageValidator(
                 require(task.manifest.protocol.value in protocols && task.manifest.evaluation.kind.value in kinds) {
                     "unsupported Lean protocol or evaluation kind"
                 }
-                require(task.manifest.taskType.value != 3 ||
-                    (task.manifest.condition.value == "statement_only" && task.manifest.artefacts.none {
-                        it.role.value in setOf("paper_evidence", "enriched_evidence")
-                    })) { "Type 3 tasks must be statement-only without proof evidence" }
+                require(
+                    task.manifest.taskType.value != 3 ||
+                            (task.manifest.condition.value == "statement_only" && task.manifest.artefacts.none {
+                                it.role.value in setOf("paper_evidence", "enriched_evidence")
+                            })
+                ) { "Type 3 tasks must be statement-only without proof evidence" }
                 val profile = profiles.read(task)
-                for (comparison in profile.sameArtefactsAs) {
-                    val other = byId[comparison.taskId] ?: error("comparison task is not selected: ${comparison.taskId}")
+                for ((taskId, roles) in profile.sameArtefactsAs) {
+                    val other =
+                        byId[taskId] ?: error("comparison task is not selected: $taskId")
                     TaskPackageVerifier().verify(other)
-                    comparison.roles.forEach { role ->
+                    roles.forEach { role ->
                         require(readRole(task, role.value) == readRole(other, role.value)) {
                             "${task.manifest.taskId} and ${other.manifest.taskId} differ in $role"
                         }
@@ -73,8 +76,10 @@ class LeanPackageValidator(
                 }
             } catch (failure: Exception) {
                 // Profiles and calibration are private. Do not print their source diagnostics.
-                EvaluationReport(EvaluationResult.InfrastructureFailure(failure.message ?: "Lean package validation failed"),
-                    publicDiagnostic = null)
+                EvaluationReport(
+                    EvaluationResult.InfrastructureFailure(failure.message ?: "Lean package validation failed"),
+                    publicDiagnostic = null
+                )
             }
             LeanPackageValidation(task.manifest.taskId, report).also(onResult)
         }
@@ -90,8 +95,10 @@ class LeanPackageValidator(
         if (!Files.exists(paperRoot.resolve("paper.json"), java.nio.file.LinkOption.NOFOLLOW_LINKS)) return
         val document = Json.parseToJsonElement(LeanInputFiles.read(paperRoot, "paper.json")).jsonObject
         val version = document["schema_version"] as? JsonPrimitive
-        require(version != null && !version.isString && version.intOrNull == 1 &&
-            document["paper_id"] == JsonPrimitive(task.manifest.paperId.value)) { "paper registry identity or version mismatch" }
+        require(
+            version != null && !version.isString && version.intOrNull == 1 &&
+                    document["paper_id"] == JsonPrimitive(task.manifest.paperId.value)
+        ) { "paper registry identity or version mismatch" }
         val registered = document.getValue("results").jsonArray.map {
             val id = it.jsonObject["id"] as? JsonPrimitive
             require(id?.isString == true) { "registered source result must have a string identifier" }
@@ -107,9 +114,9 @@ class LeanPackageValidator(
 
         internal fun boundarySource(context: String, names: List<String>): String =
             "import Lean\n$context\nrun_elab do\n  let env ← Lean.getEnv\n  pure ()\n" +
-                names.joinToString("") { name ->
-                    "  if env.contains `$name then\n    throwError \"excluded declaration exposed: $name\"\n"
-                }
+                    names.joinToString("") { name ->
+                        "  if env.contains `$name then\n    throwError \"excluded declaration exposed: $name\"\n"
+                    }
 
         /** Explicit authoring operation: refresh public hashes, then run normal validation. */
         fun updatePublicHashes(tasks: List<BenchmarkTask>, datasetRoot: Path): List<BenchmarkTask> {
@@ -127,8 +134,12 @@ class LeanPackageValidator(
                 }
                 // The context reader independently validates identities, paths and imports.
                 contexts.read(task, updateHashes = true)
-                Files.writeString(path, json.encodeToString(JsonObject.serializer(),
-                    JsonObject(document + ("artefacts" to JsonArray(artefacts)))) + "\n")
+                Files.writeString(
+                    path, json.encodeToString(
+                        JsonObject.serializer(),
+                        JsonObject(document + ("artefacts" to JsonArray(artefacts)))
+                    ) + "\n"
+                )
                 BenchmarkTask(reader.read(path), root)
             }
         }

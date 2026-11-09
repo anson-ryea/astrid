@@ -1,33 +1,15 @@
 package backend.lean.protocol
 
+import domain.*
+import prompt.PromptRenderer
 import support.SimpleTestDataset
-import domain.ArtefactPath
-import domain.ArtefactRole
-import domain.BenchmarkTask
-import domain.ConditionId
-import domain.ContextId
-import domain.EvaluationKind
-import domain.EvaluationSpecification
-import domain.PaperId
-import domain.ProtocolId
-import domain.Sha256Digest
-import domain.SourceResultId
-import domain.SubmissionKind
-import domain.SubmissionSpecification
-import domain.TaskArtefact
-import domain.TaskId
-import domain.TaskManifest
-import domain.TaskStatus
-import domain.TaskTypeId
 import java.nio.file.Files
 import java.nio.file.Path
-import java.util.Comparator
 import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.time.Duration.Companion.seconds
-import prompt.PromptRenderer
 
 class LeanProofProtocolTest {
     private val protocol = LeanProofProtocol(

@@ -1,12 +1,15 @@
 package analysis
 
-import kotlinx.serialization.json.*
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
 import run.SampleResources
 
 /** Full totals require coverage for every saved sample; known subtotals retain partial observations. */
 class ResourceSummary private constructor(val values: JsonObject) {
     companion object {
-        val columns: List<String> get() = from(emptyList()).values.keys.toList()
+        val columns: List<String> by lazy { from(emptyList()).values.keys.toList() }
 
         fun from(samples: List<SavedSample>): ResourceSummary {
             val measured = samples.mapNotNull { it.resources }
@@ -37,9 +40,13 @@ class ResourceSummary private constructor(val values: JsonObject) {
                 put("known_total_tokens", JsonPrimitive(sum(measured.map { it.knownTotalTokens })))
                 put("actual_cost_usd", JsonNull)
                 val estimates = measured.mapNotNull { it.estimatedCostUsd }
-                val estimate = if (complete && estimates.size == measured.size) estimates.sum().takeIf(Double::isFinite) else null
+                val estimate =
+                    if (complete && estimates.size == measured.size) estimates.sum().takeIf(Double::isFinite) else null
                 put("estimated_cost_usd", JsonPrimitive(estimate))
-                put("cost_policy", JsonPrimitive("Billed cost unavailable from client; estimates use configured token prices without cache discounts."))
+                put(
+                    "cost_policy",
+                    JsonPrimitive("Billed cost unavailable from client; estimates use configured token prices without cache discounts.")
+                )
             })
         }
     }

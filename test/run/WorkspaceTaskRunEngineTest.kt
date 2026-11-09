@@ -1,11 +1,10 @@
 package run
 
-import support.SimpleTestDataset
-import ai.koog.prompt.llm.LLMCapability
 import ai.koog.agents.core.tools.ToolRegistry
-import ai.koog.agents.core.tools.annotations.Tool
 import ai.koog.agents.core.tools.annotations.LLMDescription
+import ai.koog.agents.core.tools.annotations.Tool
 import ai.koog.agents.core.tools.reflect.ToolSet
+import ai.koog.prompt.llm.LLMCapability
 import ai.koog.prompt.llm.LLMProvider
 import ai.koog.prompt.llm.LLModel
 import ai.koog.prompt.message.Message
@@ -18,23 +17,14 @@ import backend.lean.protocol.LeanProtocols
 import backend.lean.workspace.LeanTaskWorkspaceFactory
 import domain.EvaluationResult
 import evaluation.TaskEvaluatorRegistry
+import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.*
+import prompt.PromptRenderer
+import support.SimpleTestDataset
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.coroutines.cancellation.CancellationException
-import kotlin.test.Test
-import kotlin.test.assertContains
-import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
-import kotlin.test.assertFalse
-import kotlin.test.assertIs
-import kotlin.test.assertTrue
-import kotlinx.coroutines.runBlocking
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
-import prompt.PromptRenderer
+import kotlin.test.*
 
 class WorkspaceTaskRunEngineTest {
     @org.junit.jupiter.api.io.TempDir
@@ -48,21 +38,32 @@ class WorkspaceTaskRunEngineTest {
     }
     private val roots = mutableListOf<Path>()
 
-    private fun engine(executor: ScriptedPromptExecutor, budget: Int? = 12, iterations: Int? = 80,
+    private fun engine(
+        executor: ScriptedPromptExecutor, budget: Int? = 12, iterations: Int? = 80,
         otherBudget: Int? = 0, otherTools: ToolRegistry = ToolRegistry.EMPTY,
-        check: (String) -> LeanProcessResult = { LeanProcessResult.Completed(0, "'Benchmark.target' does not depend on any axioms") },
+        check: (String) -> LeanProcessResult = {
+            LeanProcessResult.Completed(
+                0,
+                "'Benchmark.target' does not depend on any axioms"
+            )
+        },
     ): TaskRunEngine {
         val prompts = projectRoot.resolve("prompts/common/v1")
         return TaskRunEngine(
             LeanProtocols.create(projectRoot.resolve("prompts/lean/v1"), SimpleTestDataset.promptRoot),
             TaskEvaluatorRegistry(listOf(LeanProofEvaluator({ _, _ -> error("host evaluator must not run") }))),
             executor,
-            BenchmarkRunSpecification(LLModel(LLMProvider.OpenRouter, "test-model",
-                capabilities = listOf(LLMCapability.Completion, LLMCapability.Tools)), 2, RepairPolicy(1), otherBudget, iterations,
-                maxWorkspaceToolCallsPerAttempt = budget),
+            BenchmarkRunSpecification(
+                LLModel(
+                    LLMProvider.OpenRouter, "test-model",
+                    capabilities = listOf(LLMCapability.Completion, LLMCapability.Tools)
+                ), 2, RepairPolicy(1), otherBudget, iterations,
+                maxWorkspaceToolCallsPerAttempt = budget
+            ),
             PromptRenderer(prompts.resolve("agent-system.md")), PromptRenderer(prompts.resolve("repair.md")),
             toolRegistry = otherTools,
-            workspaceFactory = LeanTaskWorkspaceFactory(environmentRoot, SimpleTestDataset.datasetRoot, buildDependencies = { root, _ -> roots.add(root) },
+            workspaceFactory = LeanTaskWorkspaceFactory(
+                environmentRoot, SimpleTestDataset.datasetRoot, buildDependencies = { root, _ -> roots.add(root) },
                 leanProcessFactory = { LeanProcess { source, _ -> check(source) } }),
         )
     }
@@ -72,7 +73,8 @@ class WorkspaceTaskRunEngineTest {
             put("path", JsonPrimitive("/workspace/Solution.lean"))
             put("original", JsonPrimitive(old))
             put("replacement", JsonPrimitive(new))
-        }), ResponseMetaInfo.Empty, finishReason = "tool_calls")
+        }), ResponseMetaInfo.Empty, finishReason = "tool_calls"
+    )
 
     @Test
     fun usesFileSubmissionsAndOneConversationForBoundedRepairs() = runBlocking {
@@ -100,12 +102,18 @@ class WorkspaceTaskRunEngineTest {
         assertFalse(Files.exists(roots.single()))
         assertTrue(executor.prompts[2].messages.size > executor.prompts[0].messages.size)
         executor.offeredTools.forEach { tools ->
-            assertEquals(setOf("__list_directory__", "__read_file__", "search_files", "__write_file__", "edit_file"), tools.map { it.name }.toSet())
+            assertEquals(
+                setOf("__list_directory__", "__read_file__", "search_files", "__write_file__", "edit_file"),
+                tools.map { it.name }.toSet()
+            )
         }
         val toolEvents = record.trajectory.filter { it.kind == "ToolCallCompletedEvent" }
         assertEquals(2, toolEvents.size)
         assertEquals("edit_file", toolEvents.first().details["toolName"]!!.jsonPrimitive.content)
-        assertEquals("/workspace/Solution.lean", toolEvents.first().details["toolArgs"]!!.jsonObject["path"]!!.jsonPrimitive.content)
+        assertEquals(
+            "/workspace/Solution.lean",
+            toolEvents.first().details["toolArgs"]!!.jsonObject["path"]!!.jsonPrimitive.content
+        )
         assertContains(toolEvents.first().details["result"].toString(), "trivial")
     }
 
@@ -122,7 +130,8 @@ class WorkspaceTaskRunEngineTest {
         assertIs<SampleOutcome.RepairLimitReached>(second.outcome)
         assertContains(requireNotNull(second.workspace).finalFiles.single().content, "__BENCHMARK_PROOF__")
         assertEquals(2, second.turns.size)
-        assertEquals(executor.prompts[0].messages.map { it.role to it.parts },
+        assertEquals(
+            executor.prompts[0].messages.map { it.role to it.parts },
             executor.prompts[2].messages.map { it.role to it.parts })
         assertEquals(2, roots.distinct().size)
         assertTrue(roots.none(Files::exists))
@@ -130,21 +139,29 @@ class WorkspaceTaskRunEngineTest {
 
     @Test
     fun deniedBuiltInOperationsReturnToolErrorsAndTheAgentCanContinue() = runBlocking {
-        val executor = ScriptedPromptExecutor(listOf("host read", "hidden read", "readonly write", "edit", "finish")) { reply ->
-            when (reply) {
-                "host read", "hidden read" -> Message.Assistant(
-                    MessagePart.Tool.Call(reply, "__read_file__", buildJsonObject {
-                        put("path", JsonPrimitive(if (reply == "host read") "/etc/passwd" else "/workspace/.lake/packages/mathlib/Mathlib.lean"))
-                    }), ResponseMetaInfo.Empty, finishReason = "tool_calls")
-                "readonly write" -> Message.Assistant(
-                    MessagePart.Tool.Call(reply, "__write_file__", buildJsonObject {
-                        put("path", JsonPrimitive("/workspace/lean-toolchain"))
-                        put("content", JsonPrimitive("bad"))
-                    }), ResponseMetaInfo.Empty, finishReason = "tool_calls")
-                "edit" -> edit("__BENCHMARK_PROOF__", "by\n  trivial")
-                else -> Message.Assistant("Finished", ResponseMetaInfo.Empty)
+        val executor =
+            ScriptedPromptExecutor(listOf("host read", "hidden read", "readonly write", "edit", "finish")) { reply ->
+                when (reply) {
+                    "host read", "hidden read" -> Message.Assistant(
+                        MessagePart.Tool.Call(reply, "__read_file__", buildJsonObject {
+                            put(
+                                "path",
+                                JsonPrimitive(if (reply == "host read") "/etc/passwd" else "/workspace/.lake/packages/mathlib/Mathlib.lean")
+                            )
+                        }), ResponseMetaInfo.Empty, finishReason = "tool_calls"
+                    )
+
+                    "readonly write" -> Message.Assistant(
+                        MessagePart.Tool.Call(reply, "__write_file__", buildJsonObject {
+                            put("path", JsonPrimitive("/workspace/lean-toolchain"))
+                            put("content", JsonPrimitive("bad"))
+                        }), ResponseMetaInfo.Empty, finishReason = "tool_calls"
+                    )
+
+                    "edit" -> edit("__BENCHMARK_PROOF__", "by\n  trivial")
+                    else -> Message.Assistant("Finished", ResponseMetaInfo.Empty)
+                }
             }
-        }
         val record = engine(executor).run(task, 1)
         assertEquals(SampleOutcome.Evaluated(EvaluationResult.Accepted), record.outcome)
         val results = executor.prompts.last().messages.flatMap { it.parts }.filterIsInstance<MessagePart.Tool.Result>()
@@ -166,7 +183,11 @@ class WorkspaceTaskRunEngineTest {
         assertTrue(record.turns.isEmpty())
         assertContains(requireNotNull(record.workspace).finalFiles.single().content, "  trivial")
         assertEquals(1, record.trajectory.count { it.kind == "ToolCallCompletedEvent" })
-        assertTrue(record.trajectory.any { it.kind == "AgentExecutionFailedEvent" && it.details["error"]?.jsonObject?.get("message")?.jsonPrimitive?.content?.contains("tool call limit") == true })
+        assertTrue(record.trajectory.any {
+            it.kind == "AgentExecutionFailedEvent" && it.details["error"]?.jsonObject?.get(
+                "message"
+            )?.jsonPrimitive?.content?.contains("tool call limit") == true
+        })
         assertTrue(roots.none(Files::exists))
     }
 
@@ -191,8 +212,11 @@ class WorkspaceTaskRunEngineTest {
     fun unlimitedWorkspaceCallsDoNotConsumeTheOtherToolBudget() = runBlocking {
         val executor = ScriptedPromptExecutor(listOf("read batch", "edit", "finish")) { reply ->
             when (reply) {
-                "read batch" -> Message.Assistant(listOf(readCall("read-1"), readCall("read-2")),
-                    ResponseMetaInfo.Empty, finishReason = "tool_calls")
+                "read batch" -> Message.Assistant(
+                    listOf(readCall("read-1"), readCall("read-2")),
+                    ResponseMetaInfo.Empty, finishReason = "tool_calls"
+                )
+
                 "edit" -> edit("__BENCHMARK_PROOF__", "by\n  trivial")
                 else -> Message.Assistant("Finished", ResponseMetaInfo.Empty)
             }
@@ -210,17 +234,18 @@ class WorkspaceTaskRunEngineTest {
         val executor = ScriptedPromptExecutor(listOf("mixed batch", "finish")) { reply ->
             if (reply == "mixed batch") Message.Assistant(
                 listOf(readCall("read-1"), lookupCall("lookup-1"), readCall("read-2")) +
-                    edit("__BENCHMARK_PROOF__", "by\n  trivial").parts,
-                ResponseMetaInfo.Empty, finishReason = "tool_calls")
+                        edit("__BENCHMARK_PROOF__", "by\n  trivial").parts,
+                ResponseMetaInfo.Empty, finishReason = "tool_calls"
+            )
             else Message.Assistant("Finished", ResponseMetaInfo.Empty)
         }
         val record = engine(executor, budget = 3, otherBudget = 1, otherTools = otherTools).run(task, 1)
         assertEquals(SampleOutcome.Evaluated(EvaluationResult.Accepted), record.outcome)
         assertEquals(1, lookup.calls)
         assertEquals(4, record.resources!!.toolCalls)
-        assertEquals(3, record.resources!!.workspaceToolCalls)
-        assertEquals(2, record.resources!!.modelRequests)
-        assertTrue(record.resources!!.elapsedMs >= record.resources!!.modelMs)
+        assertEquals(3, record.resources.workspaceToolCalls)
+        assertEquals(2, record.resources.modelRequests)
+        assertTrue(record.resources.elapsedMs >= record.resources.modelMs)
         assertEquals(4, record.trajectory.count { it.kind == "ToolCallCompletedEvent" })
         assertTrue(executor.offeredTools.all { it.size == 6 })
     }
@@ -231,7 +256,7 @@ class WorkspaceTaskRunEngineTest {
         val otherTools = ToolRegistry { lookup.asTools().forEach { tool(it) } }
         val executor = ScriptedPromptExecutor(listOf("first batch", "over budget")) { reply ->
             val calls = if (reply == "first batch") listOf(lookupCall("lookup-1")) +
-                edit("__BENCHMARK_PROOF__", "by\n  trivial").parts
+                    edit("__BENCHMARK_PROOF__", "by\n  trivial").parts
             else listOf(readCall("read-1"), lookupCall("lookup-2"))
             Message.Assistant(calls, ResponseMetaInfo.Empty, finishReason = "tool_calls")
         }
@@ -250,7 +275,7 @@ class WorkspaceTaskRunEngineTest {
         val otherTools = ToolRegistry { lookup.asTools().forEach { tool(it) } }
         val executor = ScriptedPromptExecutor(listOf("first batch", "over budget")) { reply ->
             val calls = if (reply == "first batch") listOf(lookupCall("lookup-1"), lookupCall("lookup-2")) +
-                edit("__BENCHMARK_PROOF__", "by\n  trivial").parts
+                    edit("__BENCHMARK_PROOF__", "by\n  trivial").parts
             else listOf(lookupCall("lookup-3"), readCall("read-1"))
             Message.Assistant(calls, ResponseMetaInfo.Empty, finishReason = "tool_calls")
         }
@@ -291,15 +316,18 @@ class WorkspaceTaskRunEngineTest {
             if (reply == "edit") edit("__BENCHMARK_PROOF__", "by\n  trivial")
             else Message.Assistant("Finished", ResponseMetaInfo.Empty)
         }
-        val record = engine(executor, iterations = 2,
+        val record = engine(
+            executor, iterations = 2,
             check = { LeanProcessResult.Completed(1, "rejected proof") }).run(task, 1)
         val budget = assertIs<SampleOutcome.BudgetExhausted>(record.outcome)
         assertEquals(SampleBudget.AGENT_ITERATIONS, budget.limit)
         assertEquals(2, executor.prompts.size)
         assertEquals(1, record.turns.size)
         assertIs<EvaluationResult.Rejected>(record.turns.single().result)
-        assertTrue(record.trajectory.any { it.kind == "AgentExecutionFailedEvent" &&
-            it.details["error"]?.jsonObject?.get("message")?.jsonPrimitive?.content?.contains("iteration limit") == true })
+        assertTrue(record.trajectory.any {
+            it.kind == "AgentExecutionFailedEvent" &&
+                    it.details["error"]?.jsonObject?.get("message")?.jsonPrimitive?.content?.contains("iteration limit") == true
+        })
         assertTrue(roots.none(Files::exists))
     }
 

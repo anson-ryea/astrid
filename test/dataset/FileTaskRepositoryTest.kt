@@ -1,29 +1,9 @@
 package dataset
 
-import domain.ArtefactPath
-import domain.ArtefactRole
-import domain.ConditionId
-import domain.ContextId
-import domain.EvaluationKind
-import domain.EvaluationSpecification
-import domain.PaperId
-import domain.ProtocolId
-import domain.Sha256Digest
-import domain.SourceResultId
-import domain.SubmissionKind
-import domain.SubmissionSpecification
-import domain.TaskArtefact
-import domain.TaskId
-import domain.TaskManifest
-import domain.TaskStatus
-import domain.TaskTypeId
+import domain.*
 import java.nio.file.Files
 import java.nio.file.Path
-import kotlin.test.Test
-import kotlin.test.assertContains
-import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
-import kotlin.test.assertNull
+import kotlin.test.*
 import kotlin.time.Duration.Companion.seconds
 
 class FileTaskRepositoryTest {

@@ -2,14 +2,14 @@ package backend.lean.evaluation
 
 import ai.koog.agents.ext.tool.file.EditFileTool
 import domain.EvaluationResult
+import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Tag
+import run.tools.WorkspaceTools
 import support.SimpleTestDataset
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
-import kotlinx.coroutines.runBlocking
-import run.tools.WorkspaceTools
 
 /** Kernel checks using only the simple fixtures' staged public import closure. */
 @Tag("lean-integration")
@@ -23,11 +23,25 @@ class WorkspaceLeanProofTest {
         tasks.forEach { task ->
             factory.prepare(task).create().use { session ->
                 val workspace = session.workspace
-                assertFalse(workspace.visibleFiles().any { it.contains("private") || it.contains("reference") || it.contains("Unrelated") })
+                assertFalse(
+                    workspace.visibleFiles()
+                        .any { it.contains("private") || it.contains("reference") || it.contains("Unrelated") })
                 val edit = EditFileTool(WorkspaceTools(workspace).fileSystem)
-                edit.execute(EditFileTool.Args("/workspace/Solution.lean", "__BENCHMARK_PROOF__", "by exact Simple.referenceProof"))
+                edit.execute(
+                    EditFileTool.Args(
+                        "/workspace/Solution.lean",
+                        "__BENCHMARK_PROOF__",
+                        "by exact Simple.referenceProof"
+                    )
+                )
                 assertIs<EvaluationResult.Rejected>(session.assess().second, task.manifest.taskId.value)
-                edit.execute(EditFileTool.Args("/workspace/Solution.lean", "by exact Simple.referenceProof", profiles.read(task).referenceSubmission.trim()))
+                edit.execute(
+                    EditFileTool.Args(
+                        "/workspace/Solution.lean",
+                        "by exact Simple.referenceProof",
+                        profiles.read(task).referenceSubmission.trim()
+                    )
+                )
                 assertEquals(EvaluationResult.Accepted, session.assess().second, task.manifest.taskId.value)
             }
         }

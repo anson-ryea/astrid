@@ -1,32 +1,7 @@
 package analysis
 
-import java.nio.file.Path
 import kotlinx.serialization.json.JsonObject
-import run.RunTaskMetadata
-import run.SampleBudget
-import run.SampleResources
-
-/** Legacy infrastructure outcomes deliberately retain their historical ambiguity. */
-enum class SampleCategory(val value: String) {
-    ACCEPTED("accepted"), REJECTED("rejected"), NEEDS_REVIEW("needs_review"),
-    EVALUATOR_FAILURE("evaluator_failure"), BUDGET_EXHAUSTED("budget_exhausted"),
-    PROVIDER_FAILURE("provider_failure"), EXECUTION_FAILURE("execution_failure"),
-    LEGACY_INFRASTRUCTURE_FAILURE("legacy_infrastructure_failure"),
-}
-
-data class SavedSample(
-    val taskId: String,
-    val sampleIndex: Int,
-    val schemaVersion: Int,
-    val category: SampleCategory,
-    val budget: SampleBudget?,
-    val firstAttemptAccepted: Boolean,
-    val firstAttemptAssessed: Boolean,
-    val recordedRepairTurns: Int,
-    val resources: SampleResources? = null,
-)
-
-data class AnalysisTaskMetadata(val labels: RunTaskMetadata, val source: String)
+import java.nio.file.Path
 
 data class SavedRun(
     val directory: Path,

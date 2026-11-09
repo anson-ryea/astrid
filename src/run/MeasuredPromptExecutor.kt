@@ -21,7 +21,12 @@ internal class MeasuredPromptExecutor(
     override suspend fun execute(prompt: Prompt, model: LLModel, tools: List<ToolDescriptor>): Message.Assistant {
         val remaining = specification.limits.maxTotalTokens?.let { limit ->
             resources.requireTotalUsage()
-            (limit - resources.total).also { if (it <= 0) exhaust(SampleBudget.TOTAL_TOKENS, "sample total-token budget exhausted") }
+            (limit - resources.total).also {
+                if (it <= 0) exhaust(
+                    SampleBudget.TOTAL_TOKENS,
+                    "sample total-token budget exhausted"
+                )
+            }
         }
         val cap = remaining?.coerceAtMost(Int.MAX_VALUE.toLong())?.toInt()?.let { allowed ->
             prompt.params.maxTokens?.coerceAtMost(allowed) ?: allowed
@@ -40,6 +45,9 @@ internal class MeasuredPromptExecutor(
 
     override fun executeStreaming(prompt: Prompt, model: LLModel, tools: List<ToolDescriptor>): Flow<StreamFrame> =
         error("benchmark sampling requires non-streaming requests for resource accounting")
-    override suspend fun moderate(prompt: Prompt, model: LLModel): ModerationResult = error("moderation is not a benchmark request")
+
+    override suspend fun moderate(prompt: Prompt, model: LLModel): ModerationResult =
+        error("moderation is not a benchmark request")
+
     override fun close() = Unit // The run owns the shared delegate.
 }

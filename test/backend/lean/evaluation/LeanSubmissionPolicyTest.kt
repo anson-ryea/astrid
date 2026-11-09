@@ -1,10 +1,6 @@
 package backend.lean.evaluation
 
-import domain.EvaluationKind
-import domain.EvaluationResult
-import domain.EvaluationSpecification
-import domain.SubmissionKind
-import domain.SubmissionSpecification
+import domain.*
 import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertIs
@@ -58,11 +54,17 @@ class LeanSubmissionPolicyTest {
 
     @Test
     fun distinguishesCaseSensitiveLeanNamesAndIdentifierBoundaries() {
-        val specification = evaluation().copy(forbiddenIdentifiers = setOf(
-            "Paper2.Contains.freshFunctionInversion", "freshFunctionInversion",
-        ))
-        assertNull(policy.checkProofBody("by\n  have h : FreshFunctionInversion := by assumption\n  exact h",
-            submission, specification))
+        val specification = evaluation().copy(
+            forbiddenIdentifiers = setOf(
+                "Paper2.Contains.freshFunctionInversion", "freshFunctionInversion",
+            )
+        )
+        assertNull(
+            policy.checkProofBody(
+                "by\n  have h : FreshFunctionInversion := by assumption\n  exact h",
+                submission, specification
+            )
+        )
         assertNull(policy.checkProofBody("by exact freshFunctionInversionResult", submission, specification))
         for (name in listOf("freshFunctionInversion", "Paper2.Contains.freshFunctionInversion")) {
             assertIs<EvaluationResult.Rejected>(policy.checkProofBody("by exact $name", submission, specification))

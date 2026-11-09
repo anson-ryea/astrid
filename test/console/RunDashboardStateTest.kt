@@ -2,13 +2,13 @@ package console
 
 import domain.EvaluationResult
 import domain.TaskId
+import run.RunEvent
+import run.SampleBudget
+import run.SampleOutcome
+import run.SamplePhase
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
-import run.RunEvent
-import run.SamplePhase
-import run.SampleBudget
-import run.SampleOutcome
 
 class RunDashboardStateTest {
     private val taskId = TaskId("task_1.1_theorem_11")
@@ -25,10 +25,12 @@ class RunDashboardStateTest {
         assertEquals(emptyMap(), empty.activeSamples)
         assertNull(empty.latestEvent)
         assertEquals(mapOf(SampleKey(taskId, 1) to SamplePhase.Preparing), firstStarted.activeSamples)
-        assertEquals(mapOf(
-            SampleKey(taskId, 1) to SamplePhase.Preparing,
-            SampleKey(taskId, 2) to SamplePhase.Preparing,
-        ), bothStarted.activeSamples)
+        assertEquals(
+            mapOf(
+                SampleKey(taskId, 1) to SamplePhase.Preparing,
+                SampleKey(taskId, 2) to SamplePhase.Preparing,
+            ), bothStarted.activeSamples
+        )
         assertEquals(SamplePhase.Evaluating, changed.activeSamples[SampleKey(taskId, 1)])
         assertEquals(mapOf(SampleKey(taskId, 2) to SamplePhase.Preparing), finished.activeSamples)
         assertEquals(1, finished.acceptedSamples)
@@ -62,7 +64,11 @@ class RunDashboardStateTest {
     fun countsBudgetAndExecutionTerminationsWithoutInventingEvaluationVerdicts() {
         val budgets = SampleBudget.entries.map { SampleOutcome.BudgetExhausted(it, "stopped") }
         var state = RunDashboardState()
-        val outcomes = budgets + SampleOutcome.ProviderFailure("stopped") + SampleOutcome.ExecutionFailure("stopped")
+        val outcomes = buildList {
+            addAll(budgets)
+            add(SampleOutcome.ProviderFailure("stopped"))
+            add(SampleOutcome.ExecutionFailure("stopped"))
+        }
         outcomes.forEachIndexed { index, outcome ->
             val event = RunEvent.SampleFinished(taskId, index + 1, outcome)
             state = state.reduce(event)
@@ -84,8 +90,12 @@ class RunDashboardStateTest {
         assertEquals(0, state.rejectedSamples)
         assertEquals(outcomes.size, state.recentDiagnostics.size)
 
-        state = state.reduce(RunEvent.SampleFinished(taskId, outcomes.size + 1,
-            SampleOutcome.RepairLimitReached(EvaluationResult.Rejected("bad proof"))))
+        state = state.reduce(
+            RunEvent.SampleFinished(
+                taskId, outcomes.size + 1,
+                SampleOutcome.RepairLimitReached(EvaluationResult.Rejected("bad proof"))
+            )
+        )
         assertEquals(1, state.rejectedSamples)
         assertEquals(budgets.size, state.budgetExhaustedSamples)
     }
@@ -94,7 +104,13 @@ class RunDashboardStateTest {
     fun retainsOnlyRecentDiagnosticsAndCountsCompletedSamplesPerTask() {
         var state = RunDashboardState()
         for (sample in 1..25) {
-            state = state.reduce(RunEvent.SampleFinished(taskId, sample, SampleOutcome.Evaluated(EvaluationResult.Rejected("retry"))))
+            state = state.reduce(
+                RunEvent.SampleFinished(
+                    taskId,
+                    sample,
+                    SampleOutcome.Evaluated(EvaluationResult.Rejected("retry"))
+                )
+            )
         }
         val previous = state
         state = state.reduce(RunEvent.SampleFinished(taskId, 26, SampleOutcome.Evaluated(EvaluationResult.Accepted)))

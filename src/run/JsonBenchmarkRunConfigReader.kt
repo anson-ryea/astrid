@@ -1,20 +1,12 @@
 package run
 
-import kotlin.time.Duration
-import kotlinx.serialization.json.double
-import kotlinx.serialization.json.doubleOrNull
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import serialization.*
 import java.nio.file.Files
 import java.nio.file.Path
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonNull
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.boolean
-import kotlinx.serialization.json.booleanOrNull
-import kotlinx.serialization.json.int
-import kotlinx.serialization.json.intOrNull
-import kotlinx.serialization.json.long
-import kotlinx.serialization.json.longOrNull
+import kotlin.time.Duration
 
 /** Reads the strict V1 JSON format for a benchmark run. */
 class JsonBenchmarkRunConfigReader {
@@ -48,13 +40,23 @@ class JsonBenchmarkRunConfigReader {
                 "samples_per_task",
                 "max_repair_turns",
                 "max_agent_iterations",
-            ) + document.keys.intersect(setOf("\$schema", "max_tool_calls_per_attempt", "max_workspace_tool_calls_per_attempt", "max_concurrent_tasks", "generation", "limits", "pricing")),
+            ) + document.keys.intersect(
+                setOf(
+                    $$"$schema",
+                    "max_tool_calls_per_attempt",
+                    "max_workspace_tool_calls_per_attempt",
+                    "max_concurrent_tasks",
+                    "generation",
+                    "limits",
+                    "pricing"
+                )
+            ),
         )
         require(document.requiredInt("schema_version") == 1) {
             "unsupported run config schema version"
         }
-        if ("\$schema" in document) {
-            require(document.requiredString("\$schema").isNotBlank()) { "field '\$schema' must not be blank" }
+        if ($$"$schema" in document) {
+            require(document.requiredString($$"$schema").isNotBlank()) { $$"field '$schema' must not be blank" }
         }
 
         val model = document["model"] as? JsonObject
@@ -80,19 +82,26 @@ class JsonBenchmarkRunConfigReader {
             } else 0,
             generation = document.optionalObject("generation")?.let { value ->
                 value.requireAllowed("generation", setOf("temperature", "top_p", "top_k", "seed"))
-                GenerationSettings(value.optionalDouble("temperature"), value.optionalDouble("top_p"),
-                    value.optionalInt("top_k"), value.optionalInt("seed"))
+                GenerationSettings(
+                    value.optionalDouble("temperature"), value.optionalDouble("top_p"),
+                    value.optionalInt("top_k"), value.optionalInt("seed")
+                )
             } ?: GenerationSettings(),
             limits = document.optionalObject("limits")?.let { value ->
                 value.requireAllowed("limits", setOf("sample_timeout", "max_total_tokens_per_sample"))
-                SampleLimits(value["sample_timeout"]?.takeUnless { it == JsonNull }?.let {
-                    Duration.parseIsoString(value.requiredString("sample_timeout"))
-                }, if ("max_total_tokens_per_sample" in value) value.requiredNullableLong("max_total_tokens_per_sample") else null)
+                SampleLimits(
+                    value["sample_timeout"]?.takeUnless { it == JsonNull }?.let {
+                        Duration.parseIsoString(value.requiredString("sample_timeout"))
+                    },
+                    if ("max_total_tokens_per_sample" in value) value.requiredNullableLong("max_total_tokens_per_sample") else null
+                )
             } ?: SampleLimits(),
             pricing = document.optionalObject("pricing")?.let { value ->
                 value.requireFields("pricing", setOf("input_usd_per_million", "output_usd_per_million"))
-                TokenPricing(requireNotNull(value.optionalDouble("input_usd_per_million")),
-                    requireNotNull(value.optionalDouble("output_usd_per_million")))
+                TokenPricing(
+                    requireNotNull(value.optionalDouble("input_usd_per_million")),
+                    requireNotNull(value.optionalDouble("output_usd_per_million"))
+                )
             },
             maxConcurrentTasks = if ("max_concurrent_tasks" in document) {
                 document.requiredInt("max_concurrent_tasks")
@@ -104,14 +113,16 @@ class JsonBenchmarkRunConfigReader {
         if (name !in this || this[name] == JsonNull) return null
         return this[name] as? JsonObject ?: throw IllegalArgumentException("'$name' must be an object or null")
     }
+
     private fun JsonObject.optionalInt(name: String): Int? =
         if (name !in this || this[name] == JsonNull) null else requiredInt(name)
+
     private fun JsonObject.optionalDouble(name: String): Double? {
         if (name !in this || this[name] == JsonNull) return null
-        val value = this[name] as? JsonPrimitive
-        require(value != null && !value.isString && value.doubleOrNull?.isFinite() == true) { "'$name' must be a finite number" }
-        return value.double
+        return this[name].doubleValue()?.takeIf { it.isFinite() }
+            ?: throw IllegalArgumentException("'$name' must be a finite number")
     }
+
     private fun JsonObject.requireAllowed(label: String, allowed: Set<String>) {
         require((keys - allowed).isEmpty()) { "$label has unknown fields: ${(keys - allowed).sorted().joinToString()}" }
     }
@@ -127,39 +138,19 @@ class JsonBenchmarkRunConfigReader {
         }
     }
 
-    private fun JsonObject.requiredString(name: String): String {
-        val value = this[name] as? JsonPrimitive
-        require(value != null && value.isString) {
-            "field '$name' must be a string"
-        }
-        return value.content
-    }
+    private fun JsonObject.requiredString(name: String): String = this[name].stringValue()
+        ?: throw IllegalArgumentException("field '$name' must be a string")
 
-    private fun JsonObject.requiredInt(name: String): Int {
-        val value = this[name] as? JsonPrimitive
-        require(value != null && !value.isString && value.intOrNull != null) {
-            "field '$name' must be an integer"
-        }
-        return value.int
-    }
+    private fun JsonObject.requiredInt(name: String): Int = this[name].intValue()
+        ?: throw IllegalArgumentException("field '$name' must be an integer")
 
     private fun JsonObject.requiredNullableInt(name: String): Int? =
         if (this[name] == JsonNull) null else requiredInt(name)
 
-    private fun JsonObject.requiredNullableLong(name: String): Long? {
-        if (this[name] == JsonNull) return null
-        val value = this[name] as? JsonPrimitive
-        require(value != null && !value.isString && value.longOrNull != null) {
-            "field '$name' must be an integer"
-        }
-        return value.long
-    }
+    private fun JsonObject.requiredNullableLong(name: String): Long? =
+        if (this[name] == JsonNull) null else this[name].longValue()
+            ?: throw IllegalArgumentException("field '$name' must be an integer")
 
-    private fun JsonObject.requiredBoolean(name: String): Boolean {
-        val value = this[name] as? JsonPrimitive
-        require(value != null && !value.isString && value.booleanOrNull != null) {
-            "field '$name' must be a boolean"
-        }
-        return value.boolean
-    }
+    private fun JsonObject.requiredBoolean(name: String): Boolean = this[name].booleanValue()
+        ?: throw IllegalArgumentException("field '$name' must be a boolean")
 }

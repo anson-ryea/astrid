@@ -11,6 +11,6 @@ data class TaskSelection(
 ) {
     fun matches(task: BenchmarkTask) = task.manifest.let {
         (taskIds.isEmpty() || it.taskId in taskIds) && (paperIds.isEmpty() || it.paperId in paperIds) &&
-            (taskTypes.isEmpty() || it.taskType in taskTypes) && (conditions.isEmpty() || it.condition in conditions)
+                (taskTypes.isEmpty() || it.taskType in taskTypes) && (conditions.isEmpty() || it.condition in conditions)
     }
 }

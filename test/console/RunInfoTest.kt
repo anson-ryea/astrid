@@ -5,26 +5,30 @@ import com.github.ajalt.mordant.terminal.Terminal
 import com.github.ajalt.mordant.terminal.TerminalRecorder
 import domain.SubmissionKind
 import domain.TaskId
-import java.nio.file.Path
-import kotlin.test.Test
-import kotlin.test.assertContains
-import kotlin.test.assertEquals
-import kotlin.test.assertFalse
-import kotlin.test.assertTrue
 import run.BenchmarkRunConfig
+import java.nio.file.Path
+import kotlin.test.*
 
 class RunInfoTest {
-    private val ids = listOf(TaskId("task_1.2_theorem_11"), TaskId("task_1.10_theorem_11"), TaskId("task_2.1_theorem_11"))
+    private val ids =
+        listOf(TaskId("task_1.2_theorem_11"), TaskId("task_1.10_theorem_11"), TaskId("task_2.1_theorem_11"))
     private val context = RunDashboardContext(
         "proofs-01", "test-model", Path.of("/datasets/pl-suite"),
         ids.associateWith { SubmissionKind("lean_proof_body") }, 2,
         configPath = Path.of("/configs/proofs.json"), outputPath = Path.of("/runs/proofs-01"), backendId = "lean",
         runConfig = BenchmarkRunConfig("test-model", null, 4096, false, 2, null, 10, maxConcurrentTasks = 3),
-        taskProblems = ids.associateWith { RunTaskProblem(if (it == ids.last()) "paper_2" else "paper_1", "shared_problem") },
+        taskProblems = ids.associateWith {
+            RunTaskProblem(
+                if (it == ids.last()) "paper_2" else "paper_1",
+                "shared_problem"
+            )
+        },
     )
 
-    private fun terminal(width: Int) = Terminal(width = width,
-        terminalInterface = TerminalRecorder(ansiLevel = AnsiLevel.NONE, width = width))
+    private fun terminal(width: Int) = Terminal(
+        width = width,
+        terminalInterface = TerminalRecorder(ansiLevel = AnsiLevel.NONE, width = width)
+    )
 
     @Test
     fun showsValidatedSettingsAndPathsWithTasksGroupedByPaperAndProblem() {
@@ -32,8 +36,10 @@ class RunInfoTest {
         assertEquals("info", output.lines().first().trim())
         assertContains(output.lines()[1], "─")
         assertEquals("run", output.lines()[2].trim())
-        for (value in listOf("proofs-01", "RUNNING", "test-model", "lean", "/configs/proofs.json", "/datasets/pl-suite",
-            "/runs/proofs-01", "concurrent tasks", "provider default", "4096", "unlimited", "workspace tool calls")) {
+        for (value in listOf(
+            "proofs-01", "RUNNING", "test-model", "lean", "/configs/proofs.json", "/datasets/pl-suite",
+            "/runs/proofs-01", "concurrent tasks", "provider default", "4096", "unlimited", "workspace tool calls"
+        )) {
             assertContains(output, value)
         }
         assertContains(output, "├─ paper_1")
@@ -55,7 +61,7 @@ class RunInfoTest {
         assertFalse(start.contains('\u001b'))
         assertContains(start, "proofs [2J injected")
         info.scrollBy(3)
-        assertFalse(render() == start)
+        assertNotEquals(render(), start)
         info.end()
         val end = render()
         assertEquals("info", end.lines().first().trim())

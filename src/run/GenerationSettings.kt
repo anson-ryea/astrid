@@ -3,7 +3,6 @@ package run
 import ai.koog.prompt.executor.clients.openrouter.OpenRouterParams
 import ai.koog.prompt.executor.clients.openrouter.models.ProviderPreferences
 import kotlinx.serialization.json.JsonPrimitive
-import kotlin.time.Duration
 
 /** Null sampling values defer to the provider; configured parameters must be supported. */
 data class GenerationSettings(
@@ -30,21 +29,4 @@ data class GenerationSettings(
         provider = if (temperature != null || topP != null || topK != null || seed != null)
             ProviderPreferences(requireParameters = true) else null,
     )
-}
-
-data class SampleLimits(val timeout: Duration? = null, val maxTotalTokens: Long? = null) {
-    init {
-        require(timeout == null || timeout.isFinite() && timeout > Duration.ZERO && timeout.inWholeMilliseconds > 0) {
-            "sample_timeout must be finite and at least one millisecond"
-        }
-        require(maxTotalTokens == null || maxTotalTokens > 0) { "max_total_tokens_per_sample must be positive" }
-    }
-}
-
-/** User-supplied estimates; these are not provider invoices and do not model cache discounts. */
-data class TokenPricing(val inputUsdPerMillion: Double, val outputUsdPerMillion: Double) {
-    init {
-        require(inputUsdPerMillion.isFinite() && inputUsdPerMillion >= 0 &&
-            outputUsdPerMillion.isFinite() && outputUsdPerMillion >= 0) { "token prices must be finite and non-negative" }
-    }
 }

@@ -1,9 +1,9 @@
 package workspace
 
+import hashing.HashCalculator
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Path
-import java.security.MessageDigest
 
 /** Bounded file storage and snapshots, independent of the backend and agent framework. */
 class TaskWorkspace internal constructor(
@@ -41,8 +41,10 @@ class TaskWorkspace internal constructor(
 
     @Synchronized
     fun write(path: String, content: String) {
-        require(path !in inputPaths &&
-            (path in specification.initialFiles || specification.scratchPath.matches(path))) {
+        require(
+            path !in inputPaths &&
+                    (path in specification.initialFiles || specification.scratchPath.matches(path))
+        ) {
             "file is read-only or not writable: $path"
         }
         val destination = resolve(path)
@@ -64,8 +66,10 @@ class TaskWorkspace internal constructor(
 
     /** Resolve validated relative paths without following symlinks, including directory ancestors for listings. */
     internal fun resolve(path: String, directory: Boolean = false): Path {
-        require((directory && path.isEmpty()) ||
-            (safePath.matches(path) && path.split('/').none { it == "." || it == ".." })) { "invalid relative path" }
+        require(
+            (directory && path.isEmpty()) ||
+                    (safePath.matches(path) && path.split('/').none { it == "." || it == ".." })
+        ) { "invalid relative path" }
         val result = root.resolve(path).normalize()
         require(result.startsWith(root)) { "path escapes workspace" }
         var current = root
@@ -78,7 +82,12 @@ class TaskWorkspace internal constructor(
             }
         }
         if (Files.exists(result, NOFOLLOW_LINKS)) {
-            require(if (directory) Files.isDirectory(result, NOFOLLOW_LINKS) else Files.isRegularFile(result, NOFOLLOW_LINKS)) {
+            require(
+                if (directory) Files.isDirectory(result, NOFOLLOW_LINKS) else Files.isRegularFile(
+                    result,
+                    NOFOLLOW_LINKS
+                )
+            ) {
                 "path is not a regular ${if (directory) "directory" else "file"}"
             }
         }
@@ -95,8 +104,7 @@ class TaskWorkspace internal constructor(
         private val safePath = Regex("[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*")
         internal fun snapshotFile(path: String, content: String): WorkspaceFile = WorkspaceFile(
             path,
-            MessageDigest.getInstance("SHA-256").digest(content.toByteArray(Charsets.UTF_8))
-                .joinToString("") { "%02x".format(it) },
+            HashCalculator().sha256(content).value,
             content,
         )
     }

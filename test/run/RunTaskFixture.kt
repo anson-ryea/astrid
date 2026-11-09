@@ -1,37 +1,20 @@
 package run
 
-import ai.koog.prompt.executor.model.PromptExecutor
 import ai.koog.agents.core.tools.ToolRegistry
+import ai.koog.prompt.executor.model.PromptExecutor
 import ai.koog.prompt.llm.LLMProvider
 import ai.koog.prompt.llm.LLModel
-import dataset.HashCalculator
-import domain.ArtefactPath
-import domain.ArtefactRole
-import domain.BenchmarkTask
-import domain.ConditionId
-import domain.ContextId
-import domain.EvaluationKind
-import domain.EvaluationResult
-import domain.EvaluationSpecification
-import domain.PaperId
-import domain.ProtocolId
-import domain.SourceResultId
-import domain.SubmissionKind
-import domain.SubmissionSpecification
-import domain.TaskArtefact
-import domain.TaskId
-import domain.TaskManifest
-import domain.TaskStatus
-import domain.TaskTypeId
+import domain.*
 import evaluation.TaskEvaluator
 import evaluation.TaskEvaluatorRegistry
-import java.nio.file.Files
-import java.nio.file.Path
-import kotlin.time.Duration.Companion.seconds
+import hashing.HashCalculator
 import prompt.PromptRenderer
 import protocol.TaskProtocol
 import protocol.TaskProtocolRegistry
 import workspace.TaskWorkspaceFactory
+import java.nio.file.Files
+import java.nio.file.Path
+import kotlin.time.Duration.Companion.seconds
 
 /** Creates a verified synthetic package for run tests. */
 internal fun createRunTask(
@@ -103,7 +86,7 @@ internal fun createRunEngine(
         EvaluationResult.Accepted
     },
     workspaceFactory: TaskWorkspaceFactory? = null,
-    detailedAssessment: ((BenchmarkTask, String) -> domain.EvaluationReport)? = null,
+    detailedAssessment: ((BenchmarkTask, String) -> EvaluationReport)? = null,
     langfuse: LangfuseTracing? = null,
     toolRegistry: ToolRegistry = ToolRegistry.EMPTY,
 ): TaskRunEngine {
@@ -131,7 +114,7 @@ internal fun createRunEngine(
             submission: String,
         ): EvaluationResult = assessSubmission(task, submission)
 
-        override fun evaluateDetailed(task: BenchmarkTask, submission: String): domain.EvaluationReport =
+        override fun evaluateDetailed(task: BenchmarkTask, submission: String): EvaluationReport =
             detailedAssessment?.invoke(task, submission) ?: super.evaluateDetailed(task, submission)
     }
 

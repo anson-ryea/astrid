@@ -1,15 +1,16 @@
 package backend.lean.validation
 
+import hashing.HashCalculator
+import kotlinx.serialization.json.*
+import org.junit.jupiter.api.io.TempDir
 import support.SimpleTestDataset
-import dataset.HashCalculator
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.test.*
-import kotlinx.serialization.json.*
-import org.junit.jupiter.api.io.TempDir
 
 class LeanValidationProfileTest {
-    @TempDir lateinit var temporaryDirectory: Path
+    @TempDir
+    lateinit var temporaryDirectory: Path
     private val task = SimpleTestDataset.task("proof")
 
     private fun setup(): Pair<LeanValidationProfileReader, JsonObject> {
@@ -29,10 +30,14 @@ class LeanValidationProfileTest {
         return LeanValidationProfileReader(root.resolve("profiles"), root) to document
     }
 
-    private fun write(document: JsonObject) = Files.writeString(temporaryDirectory.resolve(
-        "profiles/paper_1/${task.manifest.taskId.value}.json"), document.toString())
+    private fun write(document: JsonObject) = Files.writeString(
+        temporaryDirectory.resolve(
+            "profiles/paper_1/${task.manifest.taskId.value}.json"
+        ), document.toString()
+    )
 
-    @Test fun rejectsWrongIdentitiesTypesUnknownFieldsAndMissingFields() {
+    @Test
+    fun rejectsWrongIdentitiesTypesUnknownFieldsAndMissingFields() {
         val (reader, original) = setup()
         val invalid = listOf(
             JsonObject(original + ("schema_version" to JsonPrimitive("1"))),
@@ -40,14 +45,22 @@ class LeanValidationProfileTest {
             JsonObject(original + ("unexpected" to JsonPrimitive(true))),
             JsonObject(original - "excluded_declarations"),
             JsonObject(original - "reference_submission"),
-            JsonObject(original + ("excluded_declarations" to JsonArray(listOf(JsonPrimitive("A.b"), JsonPrimitive("A.b"))))),
+            JsonObject(
+                original + ("excluded_declarations" to JsonArray(
+                    listOf(
+                        JsonPrimitive("A.b"),
+                        JsonPrimitive("A.b")
+                    )
+                ))
+            ),
             JsonObject(original + ("excluded_declarations" to JsonArray(listOf(JsonPrimitive("A.b; import Lean"))))),
             JsonObject(original + ("same_artefacts_as" to JsonPrimitive(true))),
         )
         invalid.forEach { value -> write(value); assertFails { reader.read(task) } }
     }
 
-    @Test fun rejectsChangedReferencesEscapesAndSymlinkedAncestors() {
+    @Test
+    fun rejectsChangedReferencesEscapesAndSymlinkedAncestors() {
         val (reader, document) = setup()
         assertEquals("by trivial\n", reader.read(task).referenceSubmission)
         Files.writeString(temporaryDirectory.resolve("reference.proof"), "by sorry\n")
@@ -64,7 +77,8 @@ class LeanValidationProfileTest {
         assertFails { reader.read(task) }
     }
 
-    @Test fun simpleProfilesRetainAnswerExclusionsAndArtefactComparisons() {
+    @Test
+    fun simpleProfilesRetainAnswerExclusionsAndArtefactComparisons() {
         val reader = SimpleTestDataset.profiles()
         val profile = reader.read(task)
         assertTrue("Simple.referenceProof" in profile.excludedDeclarations)
@@ -73,8 +87,12 @@ class LeanValidationProfileTest {
         tasks.forEach {
             val reference = reader.read(it)
             if (it.manifest.protocol.value == "lean_proof") {
-                assertNull(backend.lean.evaluation.LeanSubmissionPolicy().checkProofBody(reference.referenceSubmission.trim(),
-                    it.manifest.submission, it.manifest.evaluation), it.manifest.taskId.value)
+                assertNull(
+                    backend.lean.evaluation.LeanSubmissionPolicy().checkProofBody(
+                        reference.referenceSubmission.trim(),
+                        it.manifest.submission, it.manifest.evaluation
+                    ), it.manifest.taskId.value
+                )
             }
         }
         val proof = SimpleTestDataset.task("proof")

@@ -23,22 +23,14 @@ data class BenchmarkRunConfig(
     init {
         require(modelId.isNotBlank()) { "model ID must not be blank" }
         require(contextLength == null || contextLength > 0) { "context length must be positive" }
-        require(maxOutputTokens == null || maxOutputTokens in 1..Int.MAX_VALUE.toLong()) {
-            "maximum output tokens must fit Koog's request limit"
-        }
+        requireOutputTokenLimit(maxOutputTokens)
         require(maxOutputTokens == null || contextLength == null || maxOutputTokens <= contextLength) {
             "maximum output tokens must not exceed context length"
         }
-        require(samplesPerTask > 0) { "samples per task must be positive" }
-        require(maxConcurrentTasks > 0) { "maximum concurrent tasks must be positive" }
+        requireSampleCounts(samplesPerTask, maxConcurrentTasks)
         require(maxRepairTurns == null || maxRepairTurns >= 0) { "maximum repair turns must not be negative" }
-        require(maxAgentIterations == null || maxAgentIterations > 0) { "maximum agent iterations must be positive" }
-        require(maxToolCallsPerAttempt == null || maxToolCallsPerAttempt >= 0) {
-            "maximum tool calls per attempt must not be negative"
-        }
-        require(maxWorkspaceToolCallsPerAttempt == null || maxWorkspaceToolCallsPerAttempt >= 0) {
-            "maximum workspace tool calls per attempt must not be negative"
-        }
+        requireAgentIterationLimit(maxAgentIterations)
+        requireToolCallLimits(maxToolCallsPerAttempt, maxWorkspaceToolCallsPerAttempt)
         require((maxToolCallsPerAttempt == 0 && maxWorkspaceToolCallsPerAttempt == 0) || supportsTools) {
             "tool calls require model tool support"
         }

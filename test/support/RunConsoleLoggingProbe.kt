@@ -11,17 +11,17 @@ import domain.SubmissionKind
 import domain.TaskId
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.github.oshai.kotlinlogging.KotlinLoggingConfiguration
-import java.nio.file.Path
-import kotlin.time.Duration.Companion.seconds
-import kotlin.time.TestTimeSource
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
-import run.SampleOutcome
 import run.RunEvent
 import run.RunPhase
+import run.SampleOutcome
 import run.SamplePhase
+import java.nio.file.Path
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
+import kotlin.time.TestTimeSource
 
 /** Runs in a fresh JVM so logging initialisation cannot be hidden by earlier tests. */
 internal object RunConsoleLoggingProbe {
@@ -32,13 +32,15 @@ internal object RunConsoleLoggingProbe {
         val output = object : TerminalInterface by recorder {
             override fun completePrintRequest(request: PrintRequest) {
                 recorder.completePrintRequest(request)
-                System.out.print(request.text)
-                if (request.trailingLinebreak) System.out.println()
+                print(request.text)
+                if (request.trailingLinebreak) println()
             }
         }
         val task = TaskId("task_1.1_theorem_11")
-        val context = RunDashboardContext("logging-probe", "test-model", Path.of("/datasets/probe"),
-            mapOf(task to SubmissionKind("lean_proof_body")), 1)
+        val context = RunDashboardContext(
+            "logging-probe", "test-model", Path.of("/datasets/probe"),
+            mapOf(task to SubmissionKind("lean_proof_body")), 1
+        )
         val clock = TestTimeSource()
         RunConsole(Terminal(terminalInterface = output), context, clock.markNow()).run { onEvent ->
             // This is the first logger requested by execution code, after the dashboard is visible.

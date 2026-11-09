@@ -4,24 +4,17 @@ import ai.koog.prompt.llm.LLMProvider
 import ai.koog.prompt.llm.LLModel
 import domain.EvaluationResult
 import domain.TaskId
-import java.nio.file.FileAlreadyExistsException
-import java.nio.file.Files
-import java.nio.file.Path
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
-import kotlin.test.assertFalse
-import kotlin.test.assertTrue
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.*
 import org.junit.jupiter.api.io.TempDir
 import workspace.TaskWorkspace
 import workspace.WorkspaceRecord
+import java.nio.file.FileAlreadyExistsException
+import java.nio.file.Files
+import java.nio.file.Path
+import kotlin.test.*
 
 class FileRunStoreTest {
     @TempDir
@@ -32,31 +25,45 @@ class FileRunStoreTest {
     @Test
     fun discardRemovesOnlyItsOwnRunWithoutFollowingSavedLinks() = runBlocking {
         val directory = temporaryDirectory.resolve("discarded-run")
-        val other = Files.createDirectory(temporaryDirectory.resolve("other-run"))
-        Files.writeString(other.resolve("keep.txt"), "existing output")
+        val other = withContext(Dispatchers.IO) {
+            Files.createDirectory(temporaryDirectory.resolve("other-run"))
+        }
+        withContext(Dispatchers.IO) {
+            Files.writeString(other.resolve("keep.txt"), "existing output")
+        }
         val store = FileRunStore(directory)
         store.begin(specification(samplesPerTask = 2), listOf(taskId))
         store.save(record())
         store.fail("quit without saving")
         assertTrue(Files.exists(directory.resolve("tasks/${taskId.value}/samples/001/record.json")))
-        Files.createSymbolicLink(directory.resolve("linked-output"), other)
+        withContext(Dispatchers.IO) {
+            Files.createSymbolicLink(directory.resolve("linked-output"), other)
+        }
 
         assertTrue(store.discard())
 
         assertFalse(Files.exists(directory))
-        assertEquals("existing output", Files.readString(other.resolve("keep.txt")))
+        assertEquals("existing output", withContext(Dispatchers.IO) {
+            Files.readString(other.resolve("keep.txt"))
+        })
         assertFalse(store.discard())
     }
 
     @Test
     fun discardBeforeBeginNeverDeletesAnExistingDirectory() = runBlocking {
-        val directory = Files.createDirectory(temporaryDirectory.resolve("existing-run"))
-        Files.writeString(directory.resolve("keep.txt"), "existing output")
+        val directory = withContext(Dispatchers.IO) {
+            Files.createDirectory(temporaryDirectory.resolve("existing-run"))
+        }
+        withContext(Dispatchers.IO) {
+            Files.writeString(directory.resolve("keep.txt"), "existing output")
+        }
         val store = FileRunStore(directory)
         assertFalse(store.discard())
         assertFailsWith<FileAlreadyExistsException> { store.begin(specification(), listOf(taskId)) }
         assertFalse(store.discard())
-        assertEquals("existing output", Files.readString(directory.resolve("keep.txt")))
+        assertEquals("existing output", withContext(Dispatchers.IO) {
+            Files.readString(directory.resolve("keep.txt"))
+        })
     }
 
     @Test
@@ -65,14 +72,24 @@ class FileRunStoreTest {
         val store = FileRunStore(directory)
         store.begin(specification(), listOf(taskId))
         val original = temporaryDirectory.resolve("original")
-        Files.move(directory, original)
-        val other = Files.createDirectory(temporaryDirectory.resolve("other"))
-        Files.writeString(other.resolve("keep.txt"), "unrelated output")
-        Files.createSymbolicLink(directory, other)
+        withContext(Dispatchers.IO) {
+            Files.move(directory, original)
+        }
+        val other = withContext(Dispatchers.IO) {
+            Files.createDirectory(temporaryDirectory.resolve("other"))
+        }
+        withContext(Dispatchers.IO) {
+            Files.writeString(other.resolve("keep.txt"), "unrelated output")
+        }
+        withContext(Dispatchers.IO) {
+            Files.createSymbolicLink(directory, other)
+        }
 
         assertFailsWith<IllegalStateException> { store.discard() }
 
-        assertEquals("unrelated output", Files.readString(other.resolve("keep.txt")))
+        assertEquals("unrelated output", withContext(Dispatchers.IO) {
+            Files.readString(other.resolve("keep.txt"))
+        })
         assertTrue(Files.exists(original.resolve("run.json")))
     }
 
@@ -82,17 +99,22 @@ class FileRunStoreTest {
         val store = FileRunStore(directory)
         store.begin(specification(), listOf(taskId))
         val base = record()
-        val evidence = domain.EvaluationEvidence("a".repeat(64), mapOf("Specification.lean" to "b".repeat(64)), "passed",
+        val evidence = domain.EvaluationEvidence(
+            "a".repeat(64), mapOf("Specification.lean" to "b".repeat(64)), "passed",
             mapOf("Benchmark.target" to setOf("propext")),
             listOf(domain.CheckEvidence("AstridSpec.agreement", "unresolved", "proved")),
-            listOf(domain.CheckEvidence("AstridSpec.compatibility", "proved")))
+            listOf(domain.CheckEvidence("AstridSpec.compatibility", "proved"))
+        )
         store.save(base.copy(turns = listOf(base.turns.single().copy(evaluationEvidence = evidence))))
         store.complete()
         val sample = readJson(directory.resolve("tasks/${taskId.value}/samples/001/record.json"))
         assertEquals("6", sample.getValue("schema_version").jsonPrimitive.content)
         val saved = sample.getValue("turns").jsonArray.single().jsonObject.getValue("evaluation_evidence").jsonObject
         assertEquals("a".repeat(64), saved.getValue("contract_sha256").jsonPrimitive.content)
-        assertEquals("proved", saved.getValue("obligations").jsonArray.single().jsonObject.getValue("refutation").jsonPrimitive.content)
+        assertEquals(
+            "proved",
+            saved.getValue("obligations").jsonArray.single().jsonObject.getValue("refutation").jsonPrimitive.content
+        )
         assertFalse("private_source" in saved)
     }
 
@@ -101,19 +123,28 @@ class FileRunStoreTest {
         val runDirectory = temporaryDirectory.resolve("unlimited-run")
         val store = FileRunStore(runDirectory)
         val specification = specification().let {
-            it.copy(model = it.model.copy(capabilities = listOf(ai.koog.prompt.llm.LLMCapability.Tools)),
+            it.copy(
+                model = it.model.copy(capabilities = listOf(ai.koog.prompt.llm.LLMCapability.Tools)),
                 repairPolicy = RepairPolicy(null), maxAgentIterations = null,
-                maxToolCallsPerAttempt = null, maxWorkspaceToolCallsPerAttempt = null)
+                maxToolCallsPerAttempt = null, maxWorkspaceToolCallsPerAttempt = null
+            )
         }
         store.begin(specification, listOf(taskId))
-        for (field in listOf("max_repair_turns", "max_agent_iterations", "max_tool_calls_per_attempt",
-            "max_workspace_tool_calls_per_attempt")) {
-            assertEquals(kotlinx.serialization.json.JsonNull, readJson(runDirectory.resolve("run.json")).getValue(field))
+        for (field in listOf(
+            "max_repair_turns", "max_agent_iterations", "max_tool_calls_per_attempt",
+            "max_workspace_tool_calls_per_attempt"
+        )) {
+            assertEquals(
+                JsonNull,
+                readJson(runDirectory.resolve("run.json")).getValue(field)
+            )
         }
         store.save(record())
         store.complete()
-        assertEquals(kotlinx.serialization.json.JsonNull,
-            readJson(runDirectory.resolve("run.json")).getValue("max_workspace_tool_calls_per_attempt"))
+        assertEquals(
+            JsonNull,
+            readJson(runDirectory.resolve("run.json")).getValue("max_workspace_tool_calls_per_attempt")
+        )
     }
 
     @Test
@@ -121,18 +152,24 @@ class FileRunStoreTest {
         val runDirectory = temporaryDirectory.resolve("workspace-run")
         val store = FileRunStore(runDirectory)
         store.begin(specification(), listOf(taskId))
-        val input = TaskWorkspace.snapshotFile("tasks/${taskId.value}/Target.lean", "theorem target : True := __BENCHMARK_PROOF__")
+        val input = TaskWorkspace.snapshotFile(
+            "tasks/${taskId.value}/Target.lean",
+            "theorem target : True := __BENCHMARK_PROOF__"
+        )
         val rejected = TaskWorkspace.snapshotFile("Solution.lean", "theorem target : True := by fail")
         val submitted = TaskWorkspace.snapshotFile("Solution.lean", "theorem target : True := by trivial")
         val scratch = TaskWorkspace.snapshotFile("scratch/notes.lean", "-- Unicode notes: ∀ x, x = x")
         val base = record()
-        store.save(base.copy(
-            workspace = WorkspaceRecord("theorem_11", "a".repeat(64), listOf(input), listOf(submitted, scratch)),
-            turns = listOf(
-                base.turns.single().copy(result = EvaluationResult.Rejected("invalid proof"), workspaceFiles = listOf(rejected)),
-                base.turns.single().copy(repairTurn = 1, workspaceFiles = listOf(submitted)),
-            ),
-        ))
+        store.save(
+            base.copy(
+                workspace = WorkspaceRecord("theorem_11", "a".repeat(64), listOf(input), listOf(submitted, scratch)),
+                turns = listOf(
+                    base.turns.single()
+                        .copy(result = EvaluationResult.Rejected("invalid proof"), workspaceFiles = listOf(rejected)),
+                    base.turns.single().copy(repairTurn = 1, workspaceFiles = listOf(submitted)),
+                ),
+            )
+        )
         store.complete()
         val sampleDirectory = runDirectory.resolve("tasks/${taskId.value}/samples/001")
         val sample = readJson(sampleDirectory.resolve("record.json"))
@@ -142,18 +179,25 @@ class FileRunStoreTest {
         assertEquals(input.content, savedInput.getValue("content").jsonPrimitive.content)
         assertEquals(input.sha256, savedInput.getValue("sha256").jsonPrimitive.content)
         val savedTurns = sample.getValue("turns").jsonArray
-        assertEquals(rejected.content, savedTurns.first().jsonObject.getValue("workspace_files")
-            .jsonArray.single().jsonObject.getValue("content").jsonPrimitive.content)
+        assertEquals(
+            rejected.content, savedTurns.first().jsonObject.getValue("workspace_files")
+                .jsonArray.single().jsonObject.getValue("content").jsonPrimitive.content
+        )
         val savedSubmission = savedTurns.last().jsonObject
             .getValue("workspace_files").jsonArray.single().jsonObject
         assertEquals(submitted.content, savedSubmission.getValue("content").jsonPrimitive.content)
         assertEquals(submitted.sha256, savedSubmission.getValue("sha256").jsonPrimitive.content)
-        assertEquals("Solution.lean", workspace.getValue("final_files").jsonArray.first().jsonObject.getValue("path").jsonPrimitive.content)
+        assertEquals(
+            "Solution.lean",
+            workspace.getValue("final_files").jsonArray.first().jsonObject.getValue("path").jsonPrimitive.content
+        )
         val outputDirectory = sampleDirectory.resolve(workspace.getValue("output_directory").jsonPrimitive.content)
-        for (file in listOf(submitted, scratch)) {
-            val savedContent = Files.readString(outputDirectory.resolve(file.path))
-            assertEquals(file.content, savedContent)
-            assertEquals(file.sha256, TaskWorkspace.snapshotFile(file.path, savedContent).sha256)
+        for ((path, sha256, content) in listOf(submitted, scratch)) {
+            val savedContent = withContext(Dispatchers.IO) {
+                Files.readString(outputDirectory.resolve(path))
+            }
+            assertEquals(content, savedContent)
+            assertEquals(sha256, TaskWorkspace.snapshotFile(path, savedContent).sha256)
         }
         assertFalse(Files.exists(outputDirectory.resolve(input.path)))
     }
@@ -230,8 +274,10 @@ class FileRunStoreTest {
         val sample = readJson(
             runDirectory.resolve("tasks/${taskId.value}/samples/001/record.json"),
         )
-        assertEquals("accepted", sample["outcome"]?.jsonObject?.get("result")?.jsonObject
-            ?.get("kind")?.jsonPrimitive?.content)
+        assertEquals(
+            "accepted", sample["outcome"]?.jsonObject?.get("result")?.jsonObject
+                ?.get("kind")?.jsonPrimitive?.content
+        )
 
         assertFailsWith<IllegalStateException> { store.complete() }
         assertFailsWith<IllegalStateException> {
@@ -265,31 +311,39 @@ class FileRunStoreTest {
             )
 
             store.begin(specification, listOf(taskId))
-            store.save(record().copy(trajectory = record().trajectory + AgentTrajectoryEvent(
-                kind = "ToolCallCompletedEvent",
-                timestampEpochMillis = 124,
-                details = buildJsonObject {
-                    put("toolName", JsonPrimitive("lookup"))
-                    put("result", JsonPrimitive("∀ x, x = x\n\"quoted\" \\ path\r\nnext line"))
-                },
-            )))
+            store.save(
+                record().copy(
+                    trajectory = record().trajectory + AgentTrajectoryEvent(
+                        kind = "ToolCallCompletedEvent",
+                        timestampEpochMillis = 124,
+                        details = buildJsonObject {
+                            put("toolName", JsonPrimitive("lookup"))
+                            put("result", JsonPrimitive("∀ x, x = x\n\"quoted\" \\ path\r\nnext line"))
+                        },
+                    )
+                )
+            )
             store.complete()
 
             val events = readJsonLines(
                 temporaryDirectory.resolve("run-004/tasks/${taskId.value}/samples/001/trajectory.jsonl"),
             )
             assertEquals(2, events.size)
-            assertEquals(listOf("LLMCallStartingEvent", "ToolCallCompletedEvent"),
+            assertEquals(
+                listOf("LLMCallStartingEvent", "ToolCallCompletedEvent"),
                 events.map { it.getValue("kind").jsonPrimitive.content })
-            assertEquals(listOf("123", "124"),
+            assertEquals(
+                listOf("123", "124"),
                 events.map { it.getValue("timestamp_epoch_ms").jsonPrimitive.content })
             for (event in events) {
                 assertEquals("1", event.getValue("schema_version").jsonPrimitive.content)
                 assertEquals(taskId.value, event.getValue("task_id").jsonPrimitive.content)
                 assertEquals("1", event.getValue("sample_index").jsonPrimitive.content)
             }
-            assertEquals("∀ x, x = x\n\"quoted\" \\ path\r\nnext line",
-                events.last().getValue("details").jsonObject.getValue("result").jsonPrimitive.content)
+            assertEquals(
+                "∀ x, x = x\n\"quoted\" \\ path\r\nnext line",
+                events.last().getValue("details").jsonObject.getValue("result").jsonPrimitive.content
+            )
         }
     }
 
@@ -298,21 +352,30 @@ class FileRunStoreTest {
         val runDirectory = temporaryDirectory.resolve("empty-trajectories")
         val store = FileRunStore(runDirectory)
         store.begin(specification(samplesPerTask = 2), listOf(taskId))
-        for (index in 1..2) store.save(record().copy(
-            sampleIndex = index,
-            trajectory = emptyList(),
-            workspace = WorkspaceRecord("theorem_11", "a".repeat(64), emptyList(),
-                listOf(TaskWorkspace.snapshotFile("Solution.lean", "-- sample $index"))),
-        ))
+        for (index in 1..2) store.save(
+            record().copy(
+                sampleIndex = index,
+                trajectory = emptyList(),
+                workspace = WorkspaceRecord(
+                    "theorem_11", "a".repeat(64), emptyList(),
+                    listOf(TaskWorkspace.snapshotFile("Solution.lean", "-- sample $index"))
+                ),
+            )
+        )
         store.complete()
         for (index in 1..2) {
-            val sampleDirectory = runDirectory.resolve("tasks/${taskId.value}/samples/${index.toString().padStart(3, '0')}")
+            val sampleDirectory =
+                runDirectory.resolve("tasks/${taskId.value}/samples/${index.toString().padStart(3, '0')}")
             val sample = readJson(sampleDirectory.resolve("record.json"))
             val trajectoryFile = sampleDirectory.resolve(sample.getValue("trajectory_file").jsonPrimitive.content)
             assertFalse("trajectory" in sample)
             assertEquals(index.toString(), sample.getValue("sample_index").jsonPrimitive.content)
-            assertEquals("", Files.readString(trajectoryFile))
-            assertEquals("-- sample $index", Files.readString(sampleDirectory.resolve("output/Solution.lean")))
+            assertEquals("", withContext(Dispatchers.IO) {
+                Files.readString(trajectoryFile)
+            })
+            assertEquals("-- sample $index", withContext(Dispatchers.IO) {
+                Files.readString(sampleDirectory.resolve("output/Solution.lean"))
+            })
         }
     }
 
@@ -320,43 +383,61 @@ class FileRunStoreTest {
     fun savesEachOutcomeVariantWithoutParallelVerdictAndTerminationFields() = runBlocking {
         val cases = listOf(
             SampleOutcome.BudgetExhausted(SampleBudget.OUTPUT_TOKENS, "truncated") to
-                """{"kind":"budget_exhausted","limit":"output_tokens","reason":"truncated"}""",
+                    """{"kind":"budget_exhausted","limit":"output_tokens","reason":"truncated"}""",
             SampleOutcome.BudgetExhausted(SampleBudget.AGENT_ITERATIONS, "iterations") to
-                """{"kind":"budget_exhausted","limit":"agent_iterations","reason":"iterations"}""",
+                    """{"kind":"budget_exhausted","limit":"agent_iterations","reason":"iterations"}""",
             SampleOutcome.BudgetExhausted(SampleBudget.TOOL_CALLS, "tools") to
-                """{"kind":"budget_exhausted","limit":"tool_calls","reason":"tools"}""",
+                    """{"kind":"budget_exhausted","limit":"tool_calls","reason":"tools"}""",
             SampleOutcome.BudgetExhausted(SampleBudget.WORKSPACE_TOOL_CALLS, "workspace") to
-                """{"kind":"budget_exhausted","limit":"workspace_tool_calls","reason":"workspace"}""",
+                    """{"kind":"budget_exhausted","limit":"workspace_tool_calls","reason":"workspace"}""",
             SampleOutcome.ProviderFailure("provider unavailable") to
-                """{"kind":"provider_failure","reason":"provider unavailable"}""",
+                    """{"kind":"provider_failure","reason":"provider unavailable"}""",
             SampleOutcome.ExecutionFailure("execution failed") to
-                """{"kind":"execution_failure","reason":"execution failed"}""",
+                    """{"kind":"execution_failure","reason":"execution failed"}""",
             SampleOutcome.Evaluated(EvaluationResult.Accepted) to
-                """{"kind":"evaluated","result":{"kind":"accepted"}}""",
+                    """{"kind":"evaluated","result":{"kind":"accepted"}}""",
             SampleOutcome.Evaluated(EvaluationResult.Rejected("semantic disagreement")) to
-                """{"kind":"evaluated","result":{"kind":"rejected","reason":"semantic disagreement"}}""",
+                    """{"kind":"evaluated","result":{"kind":"rejected","reason":"semantic disagreement"}}""",
             SampleOutcome.Evaluated(EvaluationResult.NeedsReview("unresolved")) to
-                """{"kind":"evaluated","result":{"kind":"needs_review","reason":"unresolved"}}""",
+                    """{"kind":"evaluated","result":{"kind":"needs_review","reason":"unresolved"}}""",
             SampleOutcome.Evaluated(EvaluationResult.InfrastructureFailure("Lean unavailable")) to
-                """{"kind":"evaluated","result":{"kind":"infrastructure_failure","reason":"Lean unavailable"}}""",
+                    """{"kind":"evaluated","result":{"kind":"infrastructure_failure","reason":"Lean unavailable"}}""",
             SampleOutcome.RepairLimitReached(EvaluationResult.Rejected("invalid proof")) to
-                """{"kind":"repair_limit","result":{"kind":"rejected","reason":"invalid proof"}}""",
+                    """{"kind":"repair_limit","result":{"kind":"rejected","reason":"invalid proof"}}""",
         )
         val directory = temporaryDirectory.resolve("outcomes")
         val store = FileRunStore(directory)
         store.begin(specification(samplesPerTask = cases.size), listOf(taskId))
         cases.forEachIndexed { index, (outcome, expected) ->
             val truncated = outcome is SampleOutcome.BudgetExhausted && outcome.limit == SampleBudget.OUTPUT_TOKENS
-            store.save(record().copy(
-                sampleIndex = index + 1, outcome = outcome,
-                turns = if (truncated) listOf(TaskRunRecord.Turn(0, "task", "partial", null, null)) else emptyList(),
-            ))
-            val sample = readJson(directory.resolve("tasks/${taskId.value}/samples/${(index + 1).toString().padStart(3, '0')}/record.json"))
+            store.save(
+                record().copy(
+                    sampleIndex = index + 1, outcome = outcome,
+                    turns = if (truncated) listOf(
+                        TaskRunRecord.Turn(
+                            0,
+                            "task",
+                            "partial",
+                            null,
+                            null
+                        )
+                    ) else emptyList(),
+                )
+            )
+            val sample = readJson(
+                directory.resolve(
+                    "tasks/${taskId.value}/samples/${
+                        (index + 1).toString().padStart(3, '0')
+                    }/record.json"
+                )
+            )
             assertFalse("final_result" in sample)
             assertFalse("termination" in sample)
             assertEquals(Json.parseToJsonElement(expected), sample.getValue("outcome"))
-            if (truncated) assertEquals(kotlinx.serialization.json.JsonNull,
-                sample.getValue("turns").jsonArray.single().jsonObject.getValue("result"))
+            if (truncated) assertEquals(
+                JsonNull,
+                sample.getValue("turns").jsonArray.single().jsonObject.getValue("result")
+            )
         }
         store.complete()
         assertEquals("complete", readJson(directory.resolve("run.json")).getValue("status").jsonPrimitive.content)
@@ -367,15 +448,18 @@ class FileRunStoreTest {
         val runDirectory = temporaryDirectory.resolve("failed-sample")
         val store = FileRunStore(runDirectory)
         val reason = "tool call limit exceeded"
-        val event = AgentTrajectoryEvent("AgentExecutionFailedEvent", 125,
+        val event = AgentTrajectoryEvent(
+            "AgentExecutionFailedEvent", 125,
             buildJsonObject { put("message", JsonPrimitive(reason)) })
         val finalFile = TaskWorkspace.snapshotFile("Solution.lean", "theorem target : True := by fail")
         store.begin(specification(), listOf(taskId))
-        store.save(record().copy(
-            turns = emptyList(), trajectory = listOf(event),
-            outcome = SampleOutcome.BudgetExhausted(SampleBudget.TOOL_CALLS, reason),
-            workspace = WorkspaceRecord("theorem_11", "a".repeat(64), emptyList(), listOf(finalFile)),
-        ))
+        store.save(
+            record().copy(
+                turns = emptyList(), trajectory = listOf(event),
+                outcome = SampleOutcome.BudgetExhausted(SampleBudget.TOOL_CALLS, reason),
+                workspace = WorkspaceRecord("theorem_11", "a".repeat(64), emptyList(), listOf(finalFile)),
+            )
+        )
         store.fail(reason)
         val sampleDirectory = runDirectory.resolve("tasks/${taskId.value}/samples/001")
         val sample = readJson(sampleDirectory.resolve("record.json"))
@@ -384,10 +468,13 @@ class FileRunStoreTest {
         assertEquals("budget_exhausted", outcome.getValue("kind").jsonPrimitive.content)
         assertEquals("tool_calls", outcome.getValue("limit").jsonPrimitive.content)
         assertEquals(reason, outcome.getValue("reason").jsonPrimitive.content)
-        val savedEvent = readJsonLines(sampleDirectory.resolve(sample.getValue("trajectory_file").jsonPrimitive.content)).single()
+        val savedEvent =
+            readJsonLines(sampleDirectory.resolve(sample.getValue("trajectory_file").jsonPrimitive.content)).single()
         assertEquals(event.kind, savedEvent.getValue("kind").jsonPrimitive.content)
         assertEquals(event.details, savedEvent.getValue("details"))
-        assertEquals(finalFile.content, Files.readString(sampleDirectory.resolve("output/Solution.lean")))
+        assertEquals(finalFile.content, withContext(Dispatchers.IO) {
+            Files.readString(sampleDirectory.resolve("output/Solution.lean"))
+        })
     }
 
     @Test
@@ -397,10 +484,16 @@ class FileRunStoreTest {
             val store = FileRunStore(runDirectory)
             store.begin(specification(), listOf(taskId))
             val sampleDirectory = runDirectory.resolve("tasks/${taskId.value}/samples/001")
-            Files.createDirectories(sampleDirectory)
-            Files.writeString(sampleDirectory.resolve(existingFile), "existing data")
+            withContext(Dispatchers.IO) {
+                Files.createDirectories(sampleDirectory)
+            }
+            withContext(Dispatchers.IO) {
+                Files.writeString(sampleDirectory.resolve(existingFile), "existing data")
+            }
             assertFailsWith<IllegalStateException> { store.save(record()) }
-            assertEquals("existing data", Files.readString(sampleDirectory.resolve(existingFile)))
+            assertEquals("existing data", withContext(Dispatchers.IO) {
+                Files.readString(sampleDirectory.resolve(existingFile))
+            })
             val otherFile = if (existingFile == "record.json") "trajectory.jsonl" else "record.json"
             assertFalse(Files.exists(sampleDirectory.resolve(otherFile)))
             assertFailsWith<IllegalStateException> { store.complete() }
@@ -414,16 +507,26 @@ class FileRunStoreTest {
         store.begin(specification(), listOf(taskId))
         val sampleDirectory = runDirectory.resolve("tasks/${taskId.value}/samples/001")
         val outputDirectory = sampleDirectory.resolve("output")
-        Files.createDirectories(outputDirectory)
-        Files.writeString(outputDirectory.resolve("Solution.lean"), "existing solution")
+        withContext(Dispatchers.IO) {
+            Files.createDirectories(outputDirectory)
+        }
+        withContext(Dispatchers.IO) {
+            Files.writeString(outputDirectory.resolve("Solution.lean"), "existing solution")
+        }
         val finalFile = TaskWorkspace.snapshotFile("Solution.lean", "replacement")
 
         assertFailsWith<IllegalStateException> {
-            store.save(record().copy(workspace = WorkspaceRecord(
-                "theorem_11", "a".repeat(64), emptyList(), listOf(finalFile),
-            )))
+            store.save(
+                record().copy(
+                    workspace = WorkspaceRecord(
+                        "theorem_11", "a".repeat(64), emptyList(), listOf(finalFile),
+                    )
+                )
+            )
         }
-        assertEquals("existing solution", Files.readString(outputDirectory.resolve("Solution.lean")))
+        assertEquals("existing solution", withContext(Dispatchers.IO) {
+            Files.readString(outputDirectory.resolve("Solution.lean"))
+        })
         assertFalse(Files.exists(sampleDirectory.resolve("record.json")))
         assertFalse(Files.exists(sampleDirectory.resolve("trajectory.jsonl")))
         assertFailsWith<IllegalStateException> { store.complete() }
@@ -436,10 +539,14 @@ class FileRunStoreTest {
         store.begin(specification(), listOf(taskId))
         for (path in listOf("", "../record.json", "nested/../../Solution.lean", "/Solution.lean")) {
             assertFailsWith<IllegalArgumentException> {
-                store.save(record().copy(workspace = WorkspaceRecord(
-                    "theorem_11", "a".repeat(64), emptyList(),
-                    listOf(TaskWorkspace.snapshotFile(path, "invalid output")),
-                )))
+                store.save(
+                    record().copy(
+                        workspace = WorkspaceRecord(
+                            "theorem_11", "a".repeat(64), emptyList(),
+                            listOf(TaskWorkspace.snapshotFile(path, "invalid output")),
+                        )
+                    )
+                )
             }
             assertFalse(Files.exists(runDirectory.resolve("tasks")))
         }
@@ -450,14 +557,20 @@ class FileRunStoreTest {
     fun doesNotOverwriteAnExistingRunDirectory() {
         runBlocking {
             val runDirectory = temporaryDirectory.resolve("existing-run")
-            Files.createDirectory(runDirectory)
-            Files.writeString(runDirectory.resolve("keep.txt"), "existing data")
+            withContext(Dispatchers.IO) {
+                Files.createDirectory(runDirectory)
+            }
+            withContext(Dispatchers.IO) {
+                Files.writeString(runDirectory.resolve("keep.txt"), "existing data")
+            }
 
             assertFailsWith<FileAlreadyExistsException> {
                 FileRunStore(runDirectory).begin(specification(), listOf(taskId))
             }
 
-            assertEquals("existing data", Files.readString(runDirectory.resolve("keep.txt")))
+            assertEquals("existing data", withContext(Dispatchers.IO) {
+                Files.readString(runDirectory.resolve("keep.txt"))
+            })
             assertEquals(false, Files.exists(runDirectory.resolve("run.json")))
         }
     }
@@ -519,7 +632,7 @@ class FileRunStoreTest {
     private fun readJson(path: Path) =
         Json.parseToJsonElement(Files.readString(path)).jsonObject
 
-    private fun readJsonLines(path: Path): List<kotlinx.serialization.json.JsonObject> {
+    private fun readJsonLines(path: Path): List<JsonObject> {
         val content = Files.readString(path)
         assertTrue(content.endsWith("\n"), "nonempty JSONL must end with a newline")
         return content.dropLast(1).split('\n').map { Json.parseToJsonElement(it).jsonObject }

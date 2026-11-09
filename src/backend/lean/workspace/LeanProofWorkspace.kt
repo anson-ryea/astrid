@@ -2,8 +2,8 @@ package backend.lean.workspace
 
 import backend.lean.protocol.LeanProofProtocol
 import domain.BenchmarkTask
-import domain.EvaluationResult
 import domain.EvaluationReport
+import domain.EvaluationResult
 import evaluation.TaskEvaluator
 import workspace.TaskWorkspace
 import workspace.TaskWorkspaceSession
@@ -26,15 +26,24 @@ class LeanProofWorkspace internal constructor(
 
     override fun assessDetailed(): Pair<String?, EvaluationReport> {
         workspace.changedInput()?.let { path ->
-            return null to evaluator.reportUnassessed(task, EvaluationResult.InfrastructureFailure("workspace input changed: $path"))
+            return null to evaluator.reportUnassessed(
+                task,
+                EvaluationResult.InfrastructureFailure("workspace input changed: $path")
+            )
         }
         val candidate = workspace.read("Solution.lean").replace("\r\n", "\n")
         if (!candidate.startsWith(prefix) || !candidate.endsWith(suffix) || candidate.length < prefix.length + suffix.length) {
-            return null to evaluator.reportUnassessed(task, EvaluationResult.Rejected("Solution.lean changed the fixed context or target; restore the original text around the submission slot"))
+            return null to evaluator.reportUnassessed(
+                task,
+                EvaluationResult.Rejected("Solution.lean changed the fixed context or target; restore the original text around the submission slot")
+            )
         }
         val submission = candidate.substring(prefix.length, candidate.length - suffix.length).trim()
         if (marker in submission) {
-            return submission to evaluator.reportUnassessed(task, EvaluationResult.Rejected("replace the submission marker in Solution.lean"))
+            return submission to evaluator.reportUnassessed(
+                task,
+                EvaluationResult.Rejected("replace the submission marker in Solution.lean")
+            )
         }
         return submission to evaluator.evaluateDetailed(task, submission)
     }

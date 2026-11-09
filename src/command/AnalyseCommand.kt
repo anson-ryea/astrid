@@ -16,24 +16,31 @@ import com.github.ajalt.clikt.parameters.types.path
 import com.github.ajalt.clikt.parameters.types.restrictTo
 import dataset.FileTaskRepository
 import dataset.JsonTaskManifestReader
-import java.nio.file.Files
-import java.nio.file.StandardOpenOption.CREATE_NEW
-import java.nio.file.StandardOpenOption.WRITE
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import run.RunTaskMetadata
+import java.nio.file.Files
+import java.nio.file.StandardOpenOption.CREATE_NEW
+import java.nio.file.StandardOpenOption.WRITE
 
 class AnalyseCommand : SuspendingCliktCommand("analyse") {
-    override fun help(context: Context) = "Analyse saved runs without model calls or Lean. Reports keep runs separate and include every saved sample in success-rate denominators."
+    override fun help(context: Context) =
+        "Analyse saved runs without model calls or Lean. Reports keep runs separate and include every saved sample in success-rate denominators."
 
     private val runPaths by argument("run paths", help = "One or more saved run directories")
         .path(mustExist = true, canBeFile = false).multiple(required = true)
     private val format by option("--format", help = "Report format").choice("text", "json", "csv").default("text")
-    private val output by option("--output", help = "Write to a new file instead of standard output; existing files are never overwritten")
+    private val output by option(
+        "--output",
+        help = "Write to a new file instead of standard output; existing files are never overwritten"
+    )
         .path(canBeDir = false)
     private val ks by option("--k", help = "Positive pass@k value; repeat for several values")
         .int().restrictTo(min = 1).multiple(default = listOf(1, 5, 10))
-    private val datasetRoot by option("--dataset-root", help = "Optional current task directory to supply labels missing from historical runs")
+    private val datasetRoot by option(
+        "--dataset-root",
+        help = "Optional current task directory to supply labels missing from historical runs"
+    )
         .path(mustExist = true, canBeFile = false)
 
     override suspend fun run() {

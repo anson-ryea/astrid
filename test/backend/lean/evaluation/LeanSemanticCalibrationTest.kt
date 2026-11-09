@@ -14,7 +14,8 @@ class LeanSemanticCalibrationTest {
         val task = SimpleTestDataset.task(result)
         val contract = contracts.read(task)
         SimpleTestDataset.workspaceFactory().prepare(task).create().use { session ->
-            val evaluator = LeanSemanticEvaluator(LeanLakeProcess(session.workspace.root, inheritLeanPath = false), contracts)
+            val evaluator =
+                LeanSemanticEvaluator(LeanLakeProcess(session.workspace.root, inheritLeanPath = false), contracts)
             val reference = evaluator.evaluateDetailed(task, contract.referenceSubmission)
             assertEquals(EvaluationResult.Accepted, reference.result)
             assertTrue(reference.evidence!!.candidateAxioms.keys.containsAll(contract.outputs.map { it.name }))
@@ -29,19 +30,24 @@ class LeanSemanticCalibrationTest {
         }
     }
 
-    @Test fun definitionAcceptsEquivalentArithmeticAndRefutesAnIncorrectTerm() {
+    @Test
+    fun definitionAcceptsEquivalentArithmeticAndRefutesAnIncorrectTerm() {
         calibrate("definition", { "1 + n" }, listOf("n"))
     }
 
-    @Test fun statementUsesTheFixedInterfaceAndRefutesAnArbitraryTrueProposition() {
+    @Test
+    fun statementUsesTheFixedInterfaceAndRefutesAnArbitraryTrueProposition() {
         calibrate("statement", { "value + 1 ≤ limit" }, listOf("True"))
     }
 
-    @Test fun declarationChecksPremisesAndRejectsAnAdditionalRule() {
+    @Test
+    fun declarationChecksPremisesAndRejectsAnAdditionalRule() {
         val reference = contracts.read(SimpleTestDataset.task("declaration")).referenceSubmission
-        calibrate("declaration", { it.replace("positive :", "assumption :") }, listOf(
-            reference.replace(" (positive : 0 < n)", ""),
-            "$reference  | extra : Target n\n",
-        ))
+        calibrate(
+            "declaration", { it.replace("positive :", "assumption :") }, listOf(
+                reference.replace(" (positive : 0 < n)", ""),
+                "$reference  | extra : Target n\n",
+            )
+        )
     }
 }

@@ -1,11 +1,11 @@
 package workspace
 
+import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
-import org.junit.jupiter.api.io.TempDir
 
 class TaskWorkspaceTest {
     @TempDir
@@ -15,7 +15,8 @@ class TaskWorkspaceTest {
     fun acceptsBackendSuppliedSubmissionFilesAndProtectsInputsEvenWhenScratchRulesOverlap() {
         val root = Files.createDirectory(temporaryDirectory.resolve("sample"))
         val input = TaskWorkspace.snapshotFile("scratch/prerequisite.txt", "fixed input")
-        TaskWorkspace(root, listOf(input), "context", "closure",
+        TaskWorkspace(
+            root, listOf(input), "context", "closure",
             WorkspaceSpecification(mapOf("Answer.thy" to "initial theory"), Regex("scratch/[A-Za-z]+\\.txt")),
         ).use { workspace ->
             workspace.write("Answer.thy", "submitted theory")
@@ -34,8 +35,10 @@ class TaskWorkspaceTest {
     fun rejectsUnsafeBackendSuppliedInitialPaths() {
         val root = Files.createDirectory(temporaryDirectory.resolve("sample"))
         assertFailsWith<IllegalArgumentException> {
-            TaskWorkspace(root, emptyList(), "context", "closure",
-                WorkspaceSpecification(mapOf("../Answer.txt" to "bad"), Regex("scratch/.+")))
+            TaskWorkspace(
+                root, emptyList(), "context", "closure",
+                WorkspaceSpecification(mapOf("../Answer.txt" to "bad"), Regex("scratch/.+"))
+            )
         }
         assertEquals(false, Files.exists(temporaryDirectory.resolve("Answer.txt")))
     }

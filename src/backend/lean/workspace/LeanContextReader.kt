@@ -1,19 +1,13 @@
 package backend.lean.workspace
 
 import backend.lean.LeanInputFiles
-import dataset.HashCalculator
 import domain.BenchmarkTask
 import domain.Sha256Digest
+import hashing.HashCalculator
+import kotlinx.serialization.json.*
+import serialization.stringValue
 import java.nio.file.Files
 import java.nio.file.Path
-import kotlinx.serialization.json.*
-
-internal data class LeanContext(
-    val metadata: String,
-    val imports: List<String>,
-    val sources: Map<String, String>,
-    val sha256: String,
-)
 
 /** Reads the V1 context schema and computes its exact public dependency closure. */
 internal class LeanContextReader(datasetRoot: Path) {
@@ -52,7 +46,8 @@ internal class LeanContextReader(datasetRoot: Path) {
         Sha256Digest(closure.string("sha256"))
 
         val contextArtefact = task.manifest.artefacts.single { it.role.value == "lean_context" }
-        val contextSource = LeanInputFiles.read(LeanInputFiles.root(task.packageDirectory), contextArtefact.path.toString())
+        val contextSource =
+            LeanInputFiles.read(LeanInputFiles.root(task.packageDirectory), contextArtefact.path.toString())
         require(sourceImports(contextSource) == imports) { "task Context.lean imports do not match context metadata" }
         val sources = linkedMapOf<String, String>()
         val visiting = mutableSetOf<String>()
@@ -71,10 +66,12 @@ internal class LeanContextReader(datasetRoot: Path) {
         imports.forEach(::visit)
         val digest = HashCalculator().sha256Closure(sources).value
         if (updateHashes) {
-            document = JsonObject(document + mapOf(
-                "files" to JsonArray(sources.keys.map(::JsonPrimitive)),
-                "closure" to JsonObject(closure + ("sha256" to JsonPrimitive(digest))),
-            ))
+            document = JsonObject(
+                document + mapOf(
+                    "files" to JsonArray(sources.keys.map(::JsonPrimitive)),
+                    "closure" to JsonObject(closure + ("sha256" to JsonPrimitive(digest))),
+                )
+            )
             metadata = json.encodeToString(JsonObject.serializer(), document) + "\n"
             Files.writeString(path, metadata)
         } else {
@@ -85,16 +82,16 @@ internal class LeanContextReader(datasetRoot: Path) {
     }
 
     private fun JsonObject.string(name: String): String {
-        val value = this[name] as? JsonPrimitive
-        require(value?.isString == true && value.content.isNotBlank()) { "context field $name must be a non-blank string" }
-        return value.content
+        val value = this[name].stringValue()
+        require(!value.isNullOrBlank()) { "context field $name must be a non-blank string" }
+        return value
     }
 
     private fun JsonObject.strings(name: String): List<String> =
         (this[name] as? JsonArray ?: error("context field $name must be an array")).map {
-            val value = it as? JsonPrimitive
-            require(value?.isString == true && value.content.isNotBlank()) { "context field $name must contain non-blank strings" }
-            value.content
+            val value = it.stringValue()
+            require(!value.isNullOrBlank()) { "context field $name must contain non-blank strings" }
+            value
         }
 
     companion object {
@@ -114,25 +111,49 @@ internal class LeanContextReader(datasetRoot: Path) {
                         if (char == '\n') lineComment = false
                         index++
                     }
+
                     depth > 0 -> when (pair) {
-                        "/-" -> { depth++; text.append("  "); index += 2 }
-                        "-/" -> { depth--; text.append("  "); index += 2 }
-                        else -> { text.append(if (char == '\n') '\n' else ' '); index++ }
+                        "/-" -> {
+                            depth++; text.append("  "); index += 2
+                        }
+
+                        "-/" -> {
+                            depth--; text.append("  "); index += 2
+                        }
+
+                        else -> {
+                            text.append(if (char == '\n') '\n' else ' '); index++
+                        }
                     }
+
                     quoted -> {
                         text.append(if (char == '\n') '\n' else ' ')
-                        if (char == '\\' && index + 1 < source.length) { text.append(' '); index++ }
-                        else if (char == '"') quoted = false
+                        if (char == '\\' && index + 1 < source.length) {
+                            text.append(' '); index++
+                        } else if (char == '"') quoted = false
                         index++
                     }
-                    pair == "--" -> { lineComment = true; text.append("  "); index += 2 }
-                    pair == "/-" -> { depth = 1; text.append("  "); index += 2 }
+
+                    pair == "--" -> {
+                        lineComment = true; text.append("  "); index += 2
+                    }
+
+                    pair == "/-" -> {
+                        depth = 1; text.append("  "); index += 2
+                    }
+
                     char == '\'' && characterLiteral.matchAt(source, index) != null -> {
                         val literal = characterLiteral.matchAt(source, index)!!.value
                         text.append(" ".repeat(literal.length)); index += literal.length
                     }
-                    char == '"' -> { quoted = true; text.append(' '); index++ }
-                    else -> { text.append(char); index++ }
+
+                    char == '"' -> {
+                        quoted = true; text.append(' '); index++
+                    }
+
+                    else -> {
+                        text.append(char); index++
+                    }
                 }
             }
             require(depth == 0 && !quoted) { "unterminated Lean comment or string" }

@@ -26,8 +26,10 @@ internal class TerminalScreen(private val width: Int, private val height: Int) {
                             rows[y].fill(' ', x.coerceAtMost(width), width)
                             for (row in y + 1 until height) rows[row].fill(' ')
                         }
+
                         2 -> rows.forEach { it.fill(' ') }
                     }
+
                     'K' -> rows[y].fill(' ', if (argument == 2) 0 else x.coerceAtMost(width), width)
                     // SGR and cursor visibility change appearance, not the screen position.
                 }

@@ -11,5 +11,5 @@ sealed interface LeanAxiomCheck {
     data object Placeholder : LeanAxiomCheck
 
     /** The expected axiom report was absent or could not be parsed. */
-    data object Unreadable: LeanAxiomCheck
+    data object Unreadable : LeanAxiomCheck
 }

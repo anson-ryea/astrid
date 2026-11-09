@@ -1,23 +1,26 @@
 package protocol
 
+import prompt.PromptRenderer
 import support.SimpleTestDataset
 import java.nio.file.Path
-import kotlin.test.Test
-import kotlin.test.assertContains
-import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
-import kotlin.test.assertFalse
-import prompt.PromptRenderer
+import kotlin.test.*
 
 class InformalProofProtocolTest {
-    private val protocols = TaskProtocolRegistry(listOf(InformalProofProtocol(
-        PromptRenderer(SimpleTestDataset.promptRoot.resolve("informal-proof.md")),
-    )))
+    private val protocols = TaskProtocolRegistry(
+        listOf(
+            InformalProofProtocol(
+                PromptRenderer(SimpleTestDataset.promptRoot.resolve("informal-proof.md")),
+            )
+        )
+    )
 
     @Test
     fun extractsProseWithoutDependingOnTheLeanExtractor() {
         val protocol = InformalProofProtocol(PromptRenderer(Path.of("unused-template.md")))
-        assertEquals("By induction on the derivation.", protocol.extractSubmission("\nBy induction on the derivation.\n"))
+        assertEquals(
+            "By induction on the derivation.",
+            protocol.extractSubmission("\nBy induction on the derivation.\n")
+        )
         assertFailsWith<IllegalArgumentException> { protocol.extractSubmission(" \n ") }
     }
 

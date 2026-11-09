@@ -160,7 +160,8 @@ class JsonTaskManifestReaderTest {
         }
     }
 
-    private fun manifestPath(taskId: String) = SimpleTestDataset.datasetRoot.resolve("paper_1/tasks/$taskId/manifest.json")
+    private fun manifestPath(taskId: String) =
+        SimpleTestDataset.datasetRoot.resolve("paper_1/tasks/$taskId/manifest.json")
 
     private fun currentManifestContents(): String = manifestPath("task_1.4_proof").readText()
 

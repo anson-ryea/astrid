@@ -2,27 +2,14 @@ package console
 
 import domain.EvaluationResult
 import domain.TaskId
-import kotlin.coroutines.cancellation.CancellationException
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
-import kotlin.test.assertFalse
-import kotlin.test.assertTrue
-import kotlin.time.Duration.Companion.seconds
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.CoroutineStart
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.async
-import kotlinx.coroutines.cancel
+import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.ClosedSendChannelException
-import kotlinx.coroutines.joinAll
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withTimeout
-import run.SampleOutcome
 import run.RunEvent
+import run.SampleOutcome
 import run.SamplePhase
+import kotlin.coroutines.cancellation.CancellationException
+import kotlin.test.*
+import kotlin.time.Duration.Companion.seconds
 
 class RunEventProcessorTest {
     private val taskId = TaskId("task_1.1_theorem_11")

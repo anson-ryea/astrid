@@ -1,26 +1,9 @@
 package backend.lean.evaluation
 
-import dataset.HashCalculator
 import domain.*
-import domain.ArtefactPath
-import domain.ArtefactRole
-import domain.BenchmarkTask
-import domain.ConditionId
-import domain.ContextId
-import domain.EvaluationKind
-import domain.EvaluationSpecification
-import domain.PaperId
-import domain.ProtocolId
-import domain.SourceResultId
-import domain.SubmissionKind
-import domain.SubmissionSpecification
-import domain.TaskArtefact
-import domain.TaskId
-import domain.TaskManifest
-import domain.TaskTypeId
+import hashing.HashCalculator
 import java.nio.file.Files
 import java.nio.file.Path
-import java.util.Comparator
 import kotlin.time.Duration.Companion.seconds
 
 internal fun withLeanProofTask(block: (BenchmarkTask) -> Unit) {

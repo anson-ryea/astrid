@@ -1,6 +1,7 @@
 package dataset
 
 import domain.BenchmarkTask
+import hashing.HashCalculator
 import kotlin.io.path.isDirectory
 import kotlin.io.path.isRegularFile
 import kotlin.io.path.isSymbolicLink

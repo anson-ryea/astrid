@@ -12,5 +12,9 @@ internal fun runControls(page: RunConsolePage): String {
         RunConsolePage.Logs -> listOf(key("l", "dashboard"), key("i", "info"))
         RunConsolePage.Info -> listOf(key("i", "dashboard"), key("l", "logs"), key("↑↓", "scroll"))
     }
-    return (links + key("q", "quit") + key("Q", "discard")).joinToString(gray(" · "))
+    return buildList {
+        addAll(links)
+        add(key("q", "quit"))
+        add(key("Q", "discard"))
+    }.joinToString(gray(" · "))
 }

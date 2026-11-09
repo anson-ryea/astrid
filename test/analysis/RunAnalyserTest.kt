@@ -1,15 +1,16 @@
 package analysis
 
 import domain.EvaluationResult
-import java.nio.file.Path
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.io.TempDir
 import run.SampleBudget
 import run.SampleOutcome
+import java.nio.file.Path
 import kotlin.test.*
 
 class RunAnalyserTest {
-    @TempDir lateinit var root: Path
+    @TempDir
+    lateinit var root: Path
     private val accepted = SampleOutcome.Evaluated(EvaluationResult.Accepted)
 
     @Test
@@ -56,7 +57,10 @@ class RunAnalyserTest {
         assertEquals(11.0 / 18, pass2.firstAttempt!!, 1e-12)
         assertNull(total.passAtK.single { it.k == 5 }.final)
         assertEquals(0, total.passAtK.single { it.k == 5 }.eligibleTasks)
-        assertEquals(setOf("overall", "paper", "task_type", "condition", "task"), analysis.summaries.map { it.dimension }.toSet())
+        assertEquals(
+            setOf("overall", "paper", "task_type", "condition", "task"),
+            analysis.summaries.map { it.dimension }.toSet()
+        )
         assertEquals(3, analysis.summaries.count { it.dimension == "task" })
         assertEquals(3, analysis.summaries.single { it.dimension == "paper" && it.label == "paper_1" }.finalAccepted)
         assertEquals(4, analysis.summaries.single { it.dimension == "task_type" && it.label == "1" }.savedSamples)
@@ -65,8 +69,12 @@ class RunAnalyserTest {
 
     @Test
     fun incompleteAndEmptyRunsReportCoverageWithoutPretendingMissingSamplesFailed() = runBlocking {
-        val path = savedRun(root.resolve("partial"), listOf(sample(taskA, 1, accepted),
-            sample(taskA, 2, SampleOutcome.ExecutionFailure("failed"))), 3, listOf(taskA, taskB), complete = false)
+        val path = savedRun(
+            root.resolve("partial"), listOf(
+                sample(taskA, 1, accepted),
+                sample(taskA, 2, SampleOutcome.ExecutionFailure("failed"))
+            ), 3, listOf(taskA, taskB), complete = false
+        )
         val total = RunAnalyser().analyse(SavedRunReader().read(path)).summaries.first()
         assertEquals(6, total.expectedSamples)
         assertEquals(4, total.missingSamples)

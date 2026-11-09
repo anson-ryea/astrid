@@ -1,14 +1,10 @@
 package dataset
 
 import domain.ArtefactRole
-import kotlin.test.Test
-import kotlin.test.assertContains
-import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
-import kotlin.test.assertNull
 import protocol.enrichedEvidenceRole
 import protocol.paperEvidenceRole
 import protocol.withProtocolTask
+import kotlin.test.*
 
 class TaskMaterialReaderTest {
     @Test

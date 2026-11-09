@@ -1,13 +1,13 @@
 package backend.lean.protocol
 
-import support.SimpleTestDataset
 import domain.ProtocolId
+import protocol.withProtocolTask
+import support.SimpleTestDataset
 import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
-import protocol.withProtocolTask
 
 class LeanFormalisationProtocolTest {
     private val protocols = LeanProtocols.create(Path.of("prompts", "lean", "v1"), SimpleTestDataset.promptRoot)
@@ -42,9 +42,11 @@ class LeanFormalisationProtocolTest {
             val prompt = protocol.renderPrompt(task)
 
             assertContains(prompt, "target-marker __BENCHMARK_DECLARATION__")
-            assertEquals("inductive Target where\n  | one", protocol.extractSubmission(
-                "inductive Target where\n  | one",
-            ))
+            assertEquals(
+                "inductive Target where\n  | one", protocol.extractSubmission(
+                    "inductive Target where\n  | one",
+                )
+            )
         }
     }
 

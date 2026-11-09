@@ -1,23 +1,6 @@
 package run
 
 import domain.*
-import domain.ArtefactPath
-import domain.ArtefactRole
-import domain.BenchmarkTask
-import domain.ConditionId
-import domain.ContextId
-import domain.EvaluationKind
-import domain.EvaluationSpecification
-import domain.PaperId
-import domain.ProtocolId
-import domain.Sha256Digest
-import domain.SourceResultId
-import domain.SubmissionKind
-import domain.SubmissionSpecification
-import domain.TaskArtefact
-import domain.TaskId
-import domain.TaskManifest
-import domain.TaskTypeId
 import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -41,9 +24,11 @@ class TaskSelectorTest {
             "lean_elaboration_and_review",
         )
 
-        assertEquals(listOf(frozenProof), selector.select(
-            listOf(reviewTask, candidateProof, frozenProof),
-        ))
+        assertEquals(
+            listOf(frozenProof), selector.select(
+                listOf(reviewTask, candidateProof, frozenProof),
+            )
+        )
     }
 
     @Test
@@ -57,17 +42,35 @@ class TaskSelectorTest {
     @Test
     fun combinesOrWithinDimensionsAndAndBetweenDimensionsAndRejectsIneligibleRequests() {
         val a = task("task_1.1_theorem_1", TaskStatus.FROZEN, "lean_kernel")
-        val b = task("task_1.2_theorem_2", TaskStatus.FROZEN, "lean_kernel").let { it.copy(manifest = it.manifest.copy(
-            condition = ConditionId("paper_evidence"), taskType = TaskTypeId(3))) }
+        val b = task("task_1.2_theorem_2", TaskStatus.FROZEN, "lean_kernel").let {
+            it.copy(
+                manifest = it.manifest.copy(
+                    condition = ConditionId("paper_evidence"), taskType = TaskTypeId(3)
+                )
+            )
+        }
         val candidate = task("task_1.3_theorem_3", TaskStatus.CANDIDATE_PENDING_INDEPENDENT_REVIEW, "lean_kernel")
-        val selection = TaskSelection(taskIds = setOf(a.manifest.taskId, b.manifest.taskId),
-            paperIds = setOf(PaperId("paper_1")), taskTypes = setOf(TaskTypeId(3)), conditions = setOf(ConditionId("paper_evidence")))
-        assertEquals(listOf(b), TaskSelector(setOf(EvaluationKind("lean_kernel")), selection).select(listOf(a, b, candidate)))
+        val selection = TaskSelection(
+            taskIds = setOf(a.manifest.taskId, b.manifest.taskId),
+            paperIds = setOf(PaperId("paper_1")),
+            taskTypes = setOf(TaskTypeId(3)),
+            conditions = setOf(ConditionId("paper_evidence"))
+        )
+        assertEquals(
+            listOf(b),
+            TaskSelector(setOf(EvaluationKind("lean_kernel")), selection).select(listOf(a, b, candidate))
+        )
         assertFailsWith<IllegalArgumentException> {
-            TaskSelector(setOf(EvaluationKind("lean_kernel")), TaskSelection(taskIds = setOf(candidate.manifest.taskId))).select(listOf(a, candidate))
+            TaskSelector(
+                setOf(EvaluationKind("lean_kernel")),
+                TaskSelection(taskIds = setOf(candidate.manifest.taskId))
+            ).select(listOf(a, candidate))
         }
         assertFailsWith<IllegalArgumentException> {
-            TaskSelector(setOf(EvaluationKind("lean_kernel")), TaskSelection(paperIds = setOf(PaperId("paper_99")))).select(listOf(a))
+            TaskSelector(
+                setOf(EvaluationKind("lean_kernel")),
+                TaskSelection(paperIds = setOf(PaperId("paper_99")))
+            ).select(listOf(a))
         }
     }
 

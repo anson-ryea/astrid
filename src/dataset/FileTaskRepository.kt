@@ -10,7 +10,7 @@ import kotlin.io.path.isDirectory
 class FileTaskRepository(
     datasetRoot: Path,
     private val manifestReader: TaskManifestReader,
-): TaskRepository {
+) : TaskRepository {
     private val datasetRoot =
         datasetRoot.toAbsolutePath().normalize()
 

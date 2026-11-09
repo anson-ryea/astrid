@@ -28,12 +28,14 @@ abstract class LeanFormalisationProtocol(
                 marker = marker,
                 allowedEvidenceRoles = setOf(paperEvidenceRole),
                 evidenceRequired = true,
-            ) + mapOf("TASK_INSTRUCTIONS" to taskInstructions.render(emptyMap()),
+            ) + mapOf(
+                "TASK_INSTRUCTIONS" to taskInstructions.render(emptyMap()),
                 "SUBMISSION_INSTRUCTIONS" to (submissionInstructions ?: when (id.value) {
                     "lean_definition" -> "Return only the Lean term that replaces $marker, without a Markdown fence or explanation."
                     "lean_statement" -> "Return only the proposition expression that replaces $marker, without a proof, Markdown fence or explanation."
                     else -> "Return only the Lean declaration block that replaces $marker, without a Markdown fence or explanation."
-                })),
+                })
+            ),
         )
     }
 

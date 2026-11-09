@@ -1,11 +1,7 @@
 package backend.lean.evaluation
 
 import dataset.TaskPackageVerifier
-import domain.ArtefactRole
-import domain.BenchmarkTask
-import domain.EvaluationKind
-import domain.EvaluationResult
-import domain.ProtocolId
+import domain.*
 import evaluation.TaskEvaluator
 import kotlin.io.path.readText
 
@@ -15,7 +11,7 @@ class LeanProofEvaluator(
     private val submissionPolicy: LeanSubmissionPolicy = LeanSubmissionPolicy(),
     private val sourceBuilder: LeanProofSourceBuilder = LeanProofSourceBuilder(),
     private val axiomPolicy: LeanAxiomPolicy = LeanAxiomPolicy(),
-): TaskEvaluator {
+) : TaskEvaluator {
     override val kind: EvaluationKind
         get() = EvaluationKind("lean_kernel")
 

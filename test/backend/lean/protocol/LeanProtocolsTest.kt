@@ -1,13 +1,13 @@
 package backend.lean.protocol
 
+import org.junit.jupiter.api.io.TempDir
+import protocol.withProtocolTask
 import support.SimpleTestDataset
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
-import org.junit.jupiter.api.io.TempDir
-import protocol.withProtocolTask
 
 class LeanProtocolsTest {
     @TempDir
@@ -16,10 +16,12 @@ class LeanProtocolsTest {
     @Test
     fun usesTheSelectedDatasetsInstructionsWithSharedLeanSubmissionRules() {
         Files.writeString(temporaryDirectory.resolve("lean-proof.md"), "Instructions from a different dataset.")
-        withProtocolTask("lean_proof", "lean_proof_body", mapOf(
-            "lean_context" to "context-marker",
-            "lean_target" to "target-marker __BENCHMARK_PROOF__",
-        )) { task ->
+        withProtocolTask(
+            "lean_proof", "lean_proof_body", mapOf(
+                "lean_context" to "context-marker",
+                "lean_target" to "target-marker __BENCHMARK_PROOF__",
+            )
+        ) { task ->
             val protocol = LeanProtocols.create(Path.of("prompts", "lean", "v1"), temporaryDirectory).findFor(task)
             val prompt = protocol.renderPrompt(task)
             assertContains(prompt, "Instructions from a different dataset.")

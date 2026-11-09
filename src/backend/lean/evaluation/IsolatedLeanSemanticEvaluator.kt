@@ -16,16 +16,27 @@ class IsolatedLeanSemanticEvaluator(
         preflight.validateMaterial(task)
         workspaces.prepare(task).create().use { it.validateEvaluation() }
     }
-    override fun evaluate(task: BenchmarkTask, submission: String): EvaluationResult = evaluateDetailed(task, submission).result
-    override fun reportUnassessed(task: BenchmarkTask, result: EvaluationResult) = preflight.reportUnassessed(task, result)
+
+    override fun evaluate(task: BenchmarkTask, submission: String): EvaluationResult =
+        evaluateDetailed(task, submission).result
+
+    override fun reportUnassessed(task: BenchmarkTask, result: EvaluationResult) =
+        preflight.reportUnassessed(task, result)
+
     override fun evaluateDetailed(task: BenchmarkTask, submission: String): EvaluationReport = try {
         validateTask(task)
         workspaces.prepare(task).create().use { session ->
             val template = session.workspace.read("Solution.lean")
-            session.workspace.write("Solution.lean", template.replace(LeanSemanticSourceBuilder.marker(task.manifest.protocol.value), submission))
+            session.workspace.write(
+                "Solution.lean",
+                template.replace(LeanSemanticSourceBuilder.marker(task.manifest.protocol.value), submission)
+            )
             session.assessDetailed().second
         }
     } catch (failure: Exception) {
-        EvaluationReport(EvaluationResult.InfrastructureFailure("isolated semantic evaluation failed: ${failure.message}"), publicDiagnostic = null)
+        EvaluationReport(
+            EvaluationResult.InfrastructureFailure("isolated semantic evaluation failed: ${failure.message}"),
+            publicDiagnostic = null
+        )
     }
 }

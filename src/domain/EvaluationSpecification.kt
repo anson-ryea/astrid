@@ -18,7 +18,7 @@ data class EvaluationSpecification(
         require(allowedAxioms.none(String::isBlank)) {
             "allowed axiom names must not be blank"
         }
-        require(forbiddenMechanisms.all(mechanismPattern::matches)) {
+        require(forbiddenMechanisms.all(lowerSnakeCasePattern::matches)) {
             "forbidden mechanisms must use lower_snake_case"
         }
         require(forbiddenIdentifiers.none(String::isBlank)) {
@@ -26,7 +26,4 @@ data class EvaluationSpecification(
         }
     }
 
-    companion object {
-        private val mechanismPattern = Regex("[a-z][a-z0-9_]*")
-    }
 }

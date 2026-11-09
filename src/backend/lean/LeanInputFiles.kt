@@ -13,8 +13,10 @@ internal object LeanInputFiles {
 
     fun path(root: Path, relative: String): Path {
         val path = root.resolve(ArtefactPath(Path.of(relative)).value)
-        require(path.startsWith(root) && Files.isRegularFile(path, NOFOLLOW_LINKS) &&
-            path.toRealPath() == path && path.toRealPath().startsWith(root)) {
+        require(
+            path.startsWith(root) && Files.isRegularFile(path, NOFOLLOW_LINKS) &&
+                    path.toRealPath() == path && path.toRealPath().startsWith(root)
+        ) {
             "unsafe or missing Lean input: $relative"
         }
         return path

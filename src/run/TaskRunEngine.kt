@@ -13,23 +13,21 @@ import ai.koog.prompt.executor.model.PromptExecutor
 import ai.koog.prompt.message.MessagePart
 import ai.koog.utils.io.use
 import domain.BenchmarkTask
-import domain.EvaluationResult
 import domain.EvaluationReport
+import domain.EvaluationResult
 import domain.TaskStatus
 import evaluation.TaskEvaluator
 import evaluation.TaskEvaluatorRegistry
-import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runInterruptible
-import kotlinx.coroutines.withTimeoutOrNull
-import kotlin.time.TimeSource
 import prompt.PromptRenderer
 import protocol.TaskProtocol
 import protocol.TaskProtocolRegistry
 import run.tools.WorkspaceTools
 import workspace.TaskWorkspaceFactory
 import workspace.TaskWorkspaceSession
-import kotlin.time.Duration.Companion.milliseconds
+import kotlin.coroutines.cancellation.CancellationException
+import kotlin.time.TimeSource
 
 /** Runs one independent task sample with separately configurable tool and repair limits. */
 class TaskRunEngine(
@@ -64,8 +62,9 @@ class TaskRunEngine(
             "task ${task.manifest.taskId} is not frozen"
         }
 
-        val resources = SampleResourceRecorder(specification.pricing, specification.generation.effectiveSeed(sampleIndex))
-        fun remainingMs() = specification.limits.timeout?.inWholeMilliseconds?.minus(resources.elapsedMs)?.coerceAtLeast(0)
+        val resources =
+            SampleResourceRecorder(specification.pricing, specification.generation.effectiveSeed(sampleIndex))
+        val deadline = SampleDeadline(specification.limits.timeout) { resources.elapsedMs }
         onEvent(RunEvent.PhaseChanged(task.manifest.taskId, sampleIndex, SamplePhase.Preparing))
         var session: TaskWorkspaceSession? = null
         var primaryFailure: Throwable? = null
@@ -74,13 +73,14 @@ class TaskRunEngine(
                 runInterruptible(Dispatchers.IO) { session = workspaceFactory?.prepare(task)?.create() }
                 return true
             }
-            val remaining = remainingMs()
-            val prepared = if (remaining == null) prepare() else if (remaining == 0L) false
-                else withTimeoutOrNull(remaining.milliseconds) { prepare() } ?: false
-            val record = if (prepared) runPrepared(task, sampleIndex, session, onEvent, resources)
-                else TaskRunRecord(task.manifest.taskId, sampleIndex, "", "", emptyList(),
-                    SampleOutcome.BudgetExhausted(SampleBudget.SAMPLE_TIME, "sample deadline exhausted during preparation"),
-                    workspace = session?.workspace?.record(), resources = resources.snapshot())
+
+            val prepared = deadline.runOrNull(::prepare) == true
+            val record = if (prepared) runPrepared(task, sampleIndex, session, onEvent, resources, deadline)
+            else TaskRunRecord(
+                task.manifest.taskId, sampleIndex, "", "", emptyList(),
+                SampleOutcome.BudgetExhausted(SampleBudget.SAMPLE_TIME, "sample deadline exhausted during preparation"),
+                workspace = session?.workspace?.record(), resources = resources.snapshot()
+            )
             // Save before removing the workspace; persistence and cleanup are outside the experimental deadline.
             saveRecord(record)
             return record
@@ -88,7 +88,9 @@ class TaskRunEngine(
             primaryFailure = failure
             throw failure
         } finally {
-            try { session?.close() } catch (cleanup: Throwable) {
+            try {
+                session?.close()
+            } catch (cleanup: Throwable) {
                 if (primaryFailure == null) throw cleanup else primaryFailure.addSuppressed(cleanup)
             }
         }
@@ -100,6 +102,7 @@ class TaskRunEngine(
         session: TaskWorkspaceSession?,
         onEvent: suspend (RunEvent) -> Unit,
         resources: SampleResourceRecorder,
+        deadline: SampleDeadline,
     ): TaskRunRecord {
         // Keep the original failure even if Koog wraps an exception thrown inside its strategy.
         var eventDeliveryFailure: Exception? = null
@@ -127,11 +130,13 @@ class TaskRunEngine(
         val turns = mutableListOf<TaskRunRecord.Turn>()
         val trajectory = KoogTrajectoryRecorder()
         var outcome: SampleOutcome? = null
+
         // Capture explicit limits before Koog can wrap their exceptions.
         fun exhaust(limit: SampleBudget, reason: String): Nothing {
             outcome = SampleOutcome.BudgetExhausted(limit, reason)
             throw IllegalStateException(reason)
         }
+
         fun enforceBudget(available: Boolean, limit: SampleBudget, reason: String) {
             if (!available) exhaust(limit, reason)
         }
@@ -141,8 +146,10 @@ class TaskRunEngine(
         fun checkResponseBudget() {
             specification.limits.maxTotalTokens?.let { limit ->
                 resources.requireTotalUsage()
-                enforceBudget(resources.total <= limit, SampleBudget.TOTAL_TOKENS,
-                    "provider-reported usage exceeded the sample total-token budget")
+                enforceBudget(
+                    resources.total <= limit, SampleBudget.TOTAL_TOKENS,
+                    "provider-reported usage exceeded the sample total-token budget"
+                )
             }
         }
 
@@ -151,11 +158,14 @@ class TaskRunEngine(
             val runSample by node<String, String> { initialPrompt ->
                 var message = initialPrompt
                 var usedAgentIterations = 0L
+
                 // Bound model requests inside the node independently of graph traversal.
                 fun consumeIteration() {
                     specification.maxAgentIterations?.let { limit ->
-                        enforceBudget(usedAgentIterations < limit, SampleBudget.AGENT_ITERATIONS,
-                            "agent iteration limit exceeded")
+                        enforceBudget(
+                            usedAgentIterations < limit, SampleBudget.AGENT_ITERATIONS,
+                            "agent iteration limit exceeded"
+                        )
                         usedAgentIterations++
                     }
                 }
@@ -179,12 +189,16 @@ class TaskRunEngine(
                         val otherCalls = toolCalls.size - workspaceCalls
                         // Check both budgets before executing any part of the batch.
                         specification.maxWorkspaceToolCallsPerAttempt?.let { limit ->
-                            enforceBudget(workspaceCalls <= limit - usedWorkspaceToolCalls,
-                                SampleBudget.WORKSPACE_TOOL_CALLS, "workspace tool call limit exceeded")
+                            enforceBudget(
+                                workspaceCalls <= limit - usedWorkspaceToolCalls,
+                                SampleBudget.WORKSPACE_TOOL_CALLS, "workspace tool call limit exceeded"
+                            )
                         }
                         specification.maxToolCallsPerAttempt?.let { limit ->
-                            enforceBudget(otherCalls <= limit - usedToolCalls,
-                                SampleBudget.TOOL_CALLS, "tool call limit exceeded")
+                            enforceBudget(
+                                otherCalls <= limit - usedToolCalls,
+                                SampleBudget.TOOL_CALLS, "tool call limit exceeded"
+                            )
                         }
 
                         if (specification.maxWorkspaceToolCallsPerAttempt != null) usedWorkspaceToolCalls += workspaceCalls
@@ -193,8 +207,11 @@ class TaskRunEngine(
                             resources.toolCalls++
                             if (call.tool in workspaceToolNames) resources.workspaceToolCalls++
                             val started = TimeSource.Monotonic.markNow()
-                            try { environment.executeTool(call) }
-                            finally { resources.toolMs += started.elapsedNow().inWholeMilliseconds }
+                            try {
+                                environment.executeTool(call)
+                            } finally {
+                                resources.toolMs += started.elapsedNow().inWholeMilliseconds
+                            }
                         }
                         consumeIteration()
                         reply = llm.writeSession {
@@ -214,15 +231,21 @@ class TaskRunEngine(
 
                     val (submission, report) =
                         if (reply.finishReason == "length") {
-                            outcome = SampleOutcome.BudgetExhausted(SampleBudget.OUTPUT_TOKENS,
-                                "model response was truncated at the output-token limit")
+                            outcome = SampleOutcome.BudgetExhausted(
+                                SampleBudget.OUTPUT_TOKENS,
+                                "model response was truncated at the output-token limit"
+                            )
                             null to null
                         } else {
                             phaseChanged(SamplePhase.Evaluating)
                             val started = TimeSource.Monotonic.markNow()
-                            try { runInterruptible(Dispatchers.IO) {
-                                session?.assessDetailed() ?: assess(task, protocol, evaluator, response)
-                            } } finally { resources.evaluationMs += started.elapsedNow().inWholeMilliseconds }
+                            try {
+                                runInterruptible(Dispatchers.IO) {
+                                    session?.assessDetailed() ?: assess(task, protocol, evaluator, response)
+                                }
+                            } finally {
+                                resources.evaluationMs += started.elapsedNow().inWholeMilliseconds
+                            }
                         }
                     val result = report?.result
 
@@ -285,9 +308,8 @@ class TaskRunEngine(
 
                 return checkNotNull(outcome) { "agent completed without a sample outcome" }
             }
-            val remaining = specification.limits.timeout?.inWholeMilliseconds?.minus(resources.elapsedMs)?.coerceAtLeast(0)
-            val completed = if (remaining == null) execute() else if (remaining == 0L) null
-                else withTimeoutOrNull(remaining.milliseconds) { execute() }
+
+            val completed = deadline.runOrNull(::execute)
             completed ?: SampleOutcome.BudgetExhausted(SampleBudget.SAMPLE_TIME, "sample deadline exhausted")
         } catch (failure: CancellationException) {
             throw failure
@@ -327,9 +349,11 @@ class TaskRunEngine(
         val submission = try {
             protocol.extractSubmission(response)
         } catch (failure: IllegalArgumentException) {
-            return null to evaluator.reportUnassessed(task, EvaluationResult.Rejected(
-                "invalid response: ${failure.message}",
-            ))
+            return null to evaluator.reportUnassessed(
+                task, EvaluationResult.Rejected(
+                    "invalid response: ${failure.message}",
+                )
+            )
         }
 
         return submission to evaluator.evaluateDetailed(task, submission)

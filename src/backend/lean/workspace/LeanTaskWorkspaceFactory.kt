@@ -1,26 +1,17 @@
 package backend.lean.workspace
 
-import backend.lean.evaluation.LeanLakeProcess
-import backend.lean.evaluation.LeanProcess
-import backend.lean.evaluation.LeanProofEvaluator
-import backend.lean.evaluation.LeanSemanticEvaluator
-import backend.lean.evaluation.LeanSemanticContractReader
-import backend.lean.evaluation.LeanSemanticSourceBuilder
 import backend.lean.LeanInputFiles
+import backend.lean.evaluation.*
 import dataset.TaskPackageVerifier
 import domain.BenchmarkTask
+import prompt.PromptRenderer
+import workspace.*
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Path
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.toJavaDuration
-import prompt.PromptRenderer
-import workspace.TaskWorkspace
-import workspace.TaskWorkspaceFactory
-import workspace.TaskWorkspacePlan
-import workspace.WorkspaceFile
-import workspace.WorkspaceSpecification
 
 /** Stages only the public task materials and its reviewed, hashed import closure. */
 class LeanTaskWorkspaceFactory(
@@ -37,7 +28,14 @@ class LeanTaskWorkspaceFactory(
 
     /** Validate and snapshot inputs before any provider calls. No golden files are read. */
     override fun prepare(task: BenchmarkTask): Plan {
-        require(task.manifest.protocol.value in setOf("lean_proof", "lean_definition", "lean_declaration", "lean_statement")) { "unsupported Lean workspace protocol" }
+        require(
+            task.manifest.protocol.value in setOf(
+                "lean_proof",
+                "lean_definition",
+                "lean_declaration",
+                "lean_statement"
+            )
+        ) { "unsupported Lean workspace protocol" }
         TaskPackageVerifier().verify(task)
         val contextId = task.manifest.contextId.value
         val contextMetadata = contexts.read(task)
@@ -49,10 +47,12 @@ class LeanTaskWorkspaceFactory(
             require(artefact.role.value in publicRoles) { "workspace cannot expose artefact role ${artefact.role}" }
             "$packagePath/${artefact.path.value}" to readRegular(task.pathFor(artefact), task.packageDirectory)
         }
+
         fun required(role: String): String {
             val artefact = task.manifest.artefacts.single { it.role.value == role }
             return artefacts.getValue("$packagePath/${artefact.path.value}")
         }
+
         val context = required("lean_context")
         require(sourceImports(context) == imports) { "task Context.lean imports do not match context metadata" }
         val target = required("lean_target")
@@ -69,43 +69,62 @@ class LeanTaskWorkspaceFactory(
         // The staged tree contains only the selected closure. Its library glob must
         // discover new paper identifiers without adding them to the host Lake file.
         inputs["lakefile.toml"] = inputs.getValue("lakefile.toml").replace(
-            Regex("(?s)globs\\s*=\\s*\\[.*?]"), "globs = [\"dataset.+\"]")
+            Regex("(?s)globs\\s*=\\s*\\[.*?]"), "globs = [\"dataset.+\"]"
+        )
         // No host dataset .olean files are reused: these modules are built from this closure.
         require(Files.isDirectory(environmentRoot.resolve(".lake/packages"))) { "Lake package cache is missing; run lake build first" }
         inputs.putAll(contextMetadata.sources)
         inputs["contexts/$contextId.json"] = contextMetadata.metadata
-        inputs["$packagePath/manifest.json"] = readRegular(task.packageDirectory.resolve("manifest.json"), task.packageDirectory)
+        inputs["$packagePath/manifest.json"] =
+            readRegular(task.packageDirectory.resolve("manifest.json"), task.packageDirectory)
         inputs.putAll(artefacts)
         val instructions = PromptRenderer(promptRoot.resolve("common/v1/workspace.md")).render(emptyMap()) +
-            "\n\n" + if (task.manifest.protocol.value == "lean_proof") {
-                PromptRenderer(promptRoot.resolve("lean/v1/proof-workspace.md")).render(mapOf("PROOF_MARKER" to marker))
-            } else {
-                "Edit only the $marker slot in /workspace/Solution.lean. Submit the requested Lean " +
+                "\n\n" + if (task.manifest.protocol.value == "lean_proof") {
+            PromptRenderer(promptRoot.resolve("lean/v1/proof-workspace.md")).render(mapOf("PROOF_MARKER" to marker))
+        } else {
+            "Edit only the $marker slot in /workspace/Solution.lean. Submit the requested Lean " +
                     "term or declarations, preserving the fixed context and target. Your final response is not the submission. " +
                     "Scratch files are not imported. Private semantic checks provide no repair feedback."
-            }
-        return Plan(task, imports, contextId, closureHash, template,
-            inputs.map { (path, content) -> TaskWorkspace.snapshotFile(path, content) }, instructions)
+        }
+        return Plan(
+            task, imports, contextId, closureHash, template,
+            inputs.map { (path, content) -> TaskWorkspace.snapshotFile(path, content) }, instructions
+        )
     }
 
     private fun create(plan: Plan): LeanProofWorkspace {
         val root = Files.createTempDirectory("astrid-task-").toAbsolutePath().normalize()
         try {
-            val workspace = TaskWorkspace(root, plan.inputs, plan.contextId, plan.closureSha256,
-                WorkspaceSpecification(mapOf("Solution.lean" to plan.template), Regex("scratch/[A-Za-z0-9_-]+\\.lean")))
+            val workspace = TaskWorkspace(
+                root, plan.inputs, plan.contextId, plan.closureSha256,
+                WorkspaceSpecification(mapOf("Solution.lean" to plan.template), Regex("scratch/[A-Za-z0-9_-]+\\.lean"))
+            )
             Files.createDirectories(root.resolve(".lake"))
             // Runner-only shared external packages. File tools cannot see or traverse this link.
-            Files.createSymbolicLink(root.resolve(".lake/packages"), environmentRoot.resolve(".lake/packages").toRealPath())
+            Files.createSymbolicLink(
+                root.resolve(".lake/packages"),
+                environmentRoot.resolve(".lake/packages").toRealPath()
+            )
             buildDependencies(root, plan.imports)
-            return LeanProofWorkspace(workspace,
+            return LeanProofWorkspace(
+                workspace,
                 BenchmarkTask(plan.task.manifest, root.resolve("tasks/${plan.task.manifest.taskId.value}")),
-                plan.template, if (plan.task.manifest.protocol.value == "lean_proof") LeanProofEvaluator(leanProcessFactory(root))
-                else LeanSemanticEvaluator(leanProcessFactory(root), LeanSemanticContractReader(evaluationRoot), semanticSources),
-                plan.submissionInstructions, LeanSemanticSourceBuilder.marker(plan.task.manifest.protocol.value))
+                plan.template,
+                if (plan.task.manifest.protocol.value == "lean_proof") LeanProofEvaluator(leanProcessFactory(root))
+                else LeanSemanticEvaluator(
+                    leanProcessFactory(root),
+                    LeanSemanticContractReader(evaluationRoot),
+                    semanticSources
+                ),
+                plan.submissionInstructions,
+                LeanSemanticSourceBuilder.marker(plan.task.manifest.protocol.value)
+            )
         } catch (failure: Throwable) {
             try {
                 Files.walk(root).use { it.sorted(Comparator.reverseOrder()).forEach(Files::delete) }
-            } catch (cleanup: Exception) { failure.addSuppressed(cleanup) }
+            } catch (cleanup: Exception) {
+                failure.addSuppressed(cleanup)
+            }
             throw failure
         }
     }
@@ -125,8 +144,10 @@ class LeanTaskWorkspaceFactory(
     private fun readRegular(path: Path, boundary: Path): String {
         val normal = path.toAbsolutePath().normalize()
         require(normal.startsWith(boundary)) { "input escapes source directory" }
-        require(Files.isRegularFile(normal, NOFOLLOW_LINKS) && normal.toRealPath() == normal &&
-            normal.toRealPath().startsWith(boundary.toRealPath())) { "input must be a regular file without symbolic links: $path" }
+        require(
+            Files.isRegularFile(normal, NOFOLLOW_LINKS) && normal.toRealPath() == normal &&
+                    normal.toRealPath().startsWith(boundary.toRealPath())
+        ) { "input must be a regular file without symbolic links: $path" }
         return Files.readString(normal)
     }
 

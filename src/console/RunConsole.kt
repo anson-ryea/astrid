@@ -1,37 +1,25 @@
 package console
 
 import com.github.ajalt.mordant.animation.animation
+import com.github.ajalt.mordant.input.RawModeScope
 import com.github.ajalt.mordant.input.enterRawModeOrNull
 import com.github.ajalt.mordant.input.isCtrlC
-import com.github.ajalt.mordant.input.RawModeScope
 import com.github.ajalt.mordant.rendering.AnsiLevel
-import com.github.ajalt.mordant.rendering.Widget
 import com.github.ajalt.mordant.rendering.TextColors
+import com.github.ajalt.mordant.rendering.Widget
 import com.github.ajalt.mordant.terminal.Terminal
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.github.oshai.kotlinlogging.KotlinLoggingConfiguration
-import kotlin.coroutines.cancellation.CancellationException
-import kotlin.time.Duration.Companion.milliseconds
-import kotlin.time.TimeMark
-import kotlin.time.TimeSource
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.CoroutineStart
-import kotlinx.coroutines.async
-import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.cancelAndJoin
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import run.RunEvent
-
-enum class RunConsoleMode { Auto, Live, Plain }
+import kotlin.coroutines.cancellation.CancellationException
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.TimeMark
+import kotlin.time.TimeSource
 
 /** Owns the event consumer and display for one run; no coroutines survive its completion. */
 class RunConsole(
@@ -46,6 +34,7 @@ class RunConsole(
         RunConsoleMode.Live -> true
         RunConsoleMode.Plain -> false
     }
+
     // Mordant 3.1 uses this flag for IntelliJ's Run console, where Animation
     // deliberately emits carriage returns without moving up to previous lines.
     private val canRedraw = !terminal.terminalInfo.supportsAnsiCursor
@@ -95,14 +84,18 @@ class RunConsole(
             return when (page.value) {
                 RunConsolePage.Logs -> logs.render(output.size.width, output.size.height, controls, visibleStatus)
                 RunConsolePage.Info -> info.render(output.size.width, output.size.height, controls, visibleStatus)
-                RunConsolePage.Dashboard -> dashboard.render(events.state.value, startedAt.elapsedNow(), output.size.width,
-                    output.size.height, visibleStatus, controlsEnabled = controls, discardResults = discarding.value)
+                RunConsolePage.Dashboard -> dashboard.render(
+                    events.state.value, startedAt.elapsedNow(), output.size.width,
+                    output.size.height, visibleStatus, controlsEnabled = controls, discardResults = discarding.value
+                )
             }
         }
+
         val paintMutex = Mutex()
         suspend fun paint(status: RunDashboardStatus) {
             paintMutex.withLock { animation?.update(frame(status)) }
         }
+
         var status = RunDashboardStatus.Running
         var runFailure: Throwable? = null
         var painter: Job? = null
@@ -126,25 +119,36 @@ class RunConsole(
                             when {
                                 key == null -> delay(10.milliseconds)
                                 key.isCtrlC || (key.key in listOf("q", "Q") && !key.ctrl && !key.alt) -> {
-                                    if (quitting.compareAndSet(false, true)) {
+                                    if (quitting.compareAndSet(expect = false, update = true)) {
                                         val discard = !key.isCtrlC && (key.key == "Q" || key.shift)
                                         discarding.value = discard
-                                        logs.append(RunLogEntry(if (discard)
-                                            "QUITTING: Stopping active tasks; current run output will be discarded"
-                                        else "QUITTING: Stopping active tasks and finalising run metadata"))
+                                        logs.append(
+                                            RunLogEntry(
+                                                if (discard)
+                                                    "QUITTING: Stopping active tasks; current run output will be discarded"
+                                                else "QUITTING: Stopping active tasks and finalising run metadata"
+                                            )
+                                        )
                                         // Acknowledge before cancellation, then keep painting during worker cleanup.
-                                        try { paint(RunDashboardStatus.Running) } finally {
-                                            execution.cancel(if (key.isCtrlC) CancellationException("Run interrupted")
-                                                else RunQuitException(discardResults = discard))
+                                        try {
+                                            paint(RunDashboardStatus.Running)
+                                        } finally {
+                                            execution.cancel(
+                                                if (key.isCtrlC) CancellationException("Run interrupted")
+                                                else RunQuitException(discardResults = discard)
+                                            )
                                         }
                                     }
                                 }
+
                                 key.key == "l" && !key.ctrl && !key.alt -> page.update {
                                     if (it == RunConsolePage.Logs) RunConsolePage.Dashboard else RunConsolePage.Logs
                                 }
+
                                 key.key == "i" && !key.ctrl && !key.alt -> page.update {
                                     if (it == RunConsolePage.Info) RunConsolePage.Dashboard else RunConsolePage.Info
                                 }
+
                                 page.value == RunConsolePage.Info && !key.ctrl && !key.alt -> when (key.key) {
                                     "ArrowDown" -> info.scrollBy(1)
                                     "ArrowUp" -> info.scrollBy(-1)
@@ -189,17 +193,19 @@ class RunConsole(
                 cleanup { rawMode?.close() }
                 cleanup { painter?.cancelAndJoin() }
                 cleanup {
-                    if (live) logs.append(RunLogEntry(
-                        "${status.name.uppercase()}: " + if (discarding.value) "Run output will be discarded"
+                    if (live) logs.append(
+                        RunLogEntry(
+                            "${status.name.uppercase()}: " + if (discarding.value) "Run output will be discarded"
                             else "${events.state.value.completedSamples} samples saved",
-                        when (status) {
-                            RunDashboardStatus.Complete -> TextColors.green
-                            RunDashboardStatus.Failed -> TextColors.red
-                            RunDashboardStatus.Cancelled -> TextColors.green
-                            RunDashboardStatus.Running -> TextColors.blue
-                            RunDashboardStatus.Quitting -> TextColors.blue
-                        },
-                    ))
+                            when (status) {
+                                RunDashboardStatus.Complete -> TextColors.green
+                                RunDashboardStatus.Failed -> TextColors.red
+                                RunDashboardStatus.Cancelled -> TextColors.green
+                                RunDashboardStatus.Running -> TextColors.blue
+                                RunDashboardStatus.Quitting -> TextColors.blue
+                            },
+                        )
+                    )
                 }
                 cleanup {
                     if (animation != null) paint(status) else output.println(frame(status))

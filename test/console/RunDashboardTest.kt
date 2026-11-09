@@ -7,20 +7,16 @@ import com.github.ajalt.mordant.terminal.TerminalRecorder
 import domain.EvaluationResult
 import domain.SubmissionKind
 import domain.TaskId
+import run.RunEvent
+import run.SampleBudget
+import run.SampleOutcome
+import run.SamplePhase
 import java.nio.file.Files
 import java.nio.file.Path
-import kotlin.test.Test
-import kotlin.test.assertContains
-import kotlin.test.assertEquals
-import kotlin.test.assertFalse
-import kotlin.test.assertTrue
+import kotlin.test.*
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
-import run.RunEvent
-import run.SamplePhase
-import run.SampleBudget
-import run.SampleOutcome
 
 class RunDashboardTest {
     private val proof = TaskId("task_1.1_theorem_11")
@@ -41,7 +37,13 @@ class RunDashboardTest {
     @Test
     fun displaysDistinctInterruptionCountersWithinTheViewport() {
         val state = RunDashboardState()
-            .reduce(RunEvent.SampleFinished(proof, 1, SampleOutcome.BudgetExhausted(SampleBudget.OUTPUT_TOKENS, "truncated")))
+            .reduce(
+                RunEvent.SampleFinished(
+                    proof,
+                    1,
+                    SampleOutcome.BudgetExhausted(SampleBudget.OUTPUT_TOKENS, "truncated")
+                )
+            )
             .reduce(RunEvent.SampleFinished(proof, 2, SampleOutcome.ProviderFailure("unavailable")))
             .reduce(RunEvent.SampleFinished(statement, 1, SampleOutcome.ExecutionFailure("tool failed")))
         val dashboard = RunDashboard(context)
@@ -64,9 +66,11 @@ class RunDashboardTest {
 
     @Test
     fun alignsElapsedTimeAtTheRightAndReservesAnEmptyFooter() {
-        val output = terminal(160).render(RunDashboard(context).render(
-            RunDashboardState(), 1.hours + 2.minutes + 3.seconds, 160,
-        ))
+        val output = terminal(160).render(
+            RunDashboard(context).render(
+                RunDashboardState(), 1.hours + 2.minutes + 3.seconds, 160,
+            )
+        )
         val lines = output.lines()
         assertTrue(lines.first().startsWith("astrid  proofs-01", ignoreCase = true))
         assertTrue(lines.first().trimEnd().endsWith("01:02:03"))
@@ -105,7 +109,13 @@ class RunDashboardTest {
         assertTrue(output.indexOf("success") < output.indexOf("review"))
         assertTrue(output.indexOf("review") < output.indexOf("failed"))
 
-        state = state.reduce(RunEvent.SampleFinished(proof, 2, SampleOutcome.Evaluated(EvaluationResult.Rejected("invalid proof"))))
+        state = state.reduce(
+            RunEvent.SampleFinished(
+                proof,
+                2,
+                SampleOutcome.Evaluated(EvaluationResult.Rejected("invalid proof"))
+            )
+        )
         val updated = terminal(160).render(dashboard.render(state, 12.seconds, 160))
         assertContains(updated, "1/2 tasks")
         assertContains(updated, "2/4 samples")
@@ -116,8 +126,20 @@ class RunDashboardTest {
     @Test
     fun keepsOutcomesDistinctAndFitsNarrowTerminals() {
         val state = RunDashboardState()
-            .reduce(RunEvent.SampleFinished(proof, 1, SampleOutcome.Evaluated(EvaluationResult.InfrastructureFailure("provider unavailable"))))
-            .reduce(RunEvent.SampleFinished(statement, 1, SampleOutcome.Evaluated(EvaluationResult.NeedsReview("manual check"))))
+            .reduce(
+                RunEvent.SampleFinished(
+                    proof,
+                    1,
+                    SampleOutcome.Evaluated(EvaluationResult.InfrastructureFailure("provider unavailable"))
+                )
+            )
+            .reduce(
+                RunEvent.SampleFinished(
+                    statement,
+                    1,
+                    SampleOutcome.Evaluated(EvaluationResult.NeedsReview("manual check"))
+                )
+            )
         for (width in listOf(32, 60, 80, 120, 160)) {
             val output = terminal(width).render(RunDashboard(context).render(state, 27.hours, width))
             assertTrue(output.lines().all { it.length <= width }, "overflow at $width columns")
@@ -141,8 +163,10 @@ class RunDashboardTest {
             for (height in listOf(2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 24)) {
                 val frame = RunDashboard(metadata).render(state, 5.seconds, width, height)
                 val rendered = frame.render(terminal(width), width)
-                assertTrue(rendered.height <= height - 1,
-                    "${rendered.height} rows overflow a $width x $height terminal")
+                assertTrue(
+                    rendered.height <= height - 1,
+                    "${rendered.height} rows overflow a $width x $height terminal"
+                )
                 val text = terminal(width).render(frame)
                 assertTrue(text.lines().last().isBlank())
                 if (height >= 8) {
@@ -150,9 +174,13 @@ class RunDashboardTest {
                     assertContains(text, "GENERATING")
                 }
                 if (width == 160 && height >= 8) {
-                    val expectedSpacers = when (height) { 8 -> 0; 9 -> 1; 10 -> 2; else -> 3 }
-                    assertEquals(expectedSpacers, text.lines().dropLast(1).count { it.isBlank() },
-                        "spacing compacted before it needed to at $height rows")
+                    val expectedSpacers = when (height) {
+                        8 -> 0; 9 -> 1; 10 -> 2; else -> 3
+                    }
+                    assertEquals(
+                        expectedSpacers, text.lines().dropLast(1).count { it.isBlank() },
+                        "spacing compacted before it needed to at $height rows"
+                    )
                     assertContains(text, "/datasets/pl-suite")
                     assertContains(text, "/runs/proofs-01")
                     assertContains(text, "repairing")
@@ -182,8 +210,12 @@ class RunDashboardTest {
         )
         var state = RunDashboardState()
         ids.take(7).forEachIndexed { index, id ->
-            state = state.reduce(RunEvent.SampleFinished(id, 1,
-                SampleOutcome.Evaluated(if (index < 6) EvaluationResult.Accepted else EvaluationResult.Rejected("invalid proof"))))
+            state = state.reduce(
+                RunEvent.SampleFinished(
+                    id, 1,
+                    SampleOutcome.Evaluated(if (index < 6) EvaluationResult.Accepted else EvaluationResult.Rejected("invalid proof"))
+                )
+            )
         }
         state = state.reduce(RunEvent.PhaseChanged(ids[7], 1, SamplePhase.Generating))
             .reduce(RunEvent.PhaseChanged(ids[8], 1, SamplePhase.Evaluating))
@@ -211,16 +243,24 @@ class RunDashboardTest {
         assertEquals(TextColors.magenta.color, rows.first().single { it.text == "astrid" }.style.color)
         val taskRow = rows.indexOfFirst { row -> row.any { it.text == proof.value } }
         assertTrue(taskRow >= 0)
-        assertEquals(listOf(TextColors.green.color, TextColors.blue.color),
+        assertEquals(
+            listOf(TextColors.green.color, TextColors.blue.color),
             rows[taskRow].filter { it.text == "◐" }.map { it.style.color })
-        assertEquals(listOf(TextColors.gray.color, TextColors.green.color, TextColors.blue.color, TextColors.yellow.color),
+        assertEquals(
+            listOf(
+                TextColors.gray.color,
+                TextColors.green.color,
+                TextColors.blue.color,
+                TextColors.yellow.color
+            ),
             rows[taskRow + 1].filter { it.text == "◒" }.map { it.style.color })
     }
 
     @Test
     fun keepsTasksOnOneLineAndSummarisesThoseThatDoNotFit() {
         val ids = (1..4).map { TaskId("task_1.${it}_theorem_11") }
-        val metadata = context.copy(taskSubmissions = ids.associateWith { SubmissionKind("lean_proof_body") }, samplesPerTask = 1)
+        val metadata =
+            context.copy(taskSubmissions = ids.associateWith { SubmissionKind("lean_proof_body") }, samplesPerTask = 1)
         val state = ids.fold(RunDashboardState()) { snapshot, id ->
             snapshot.reduce(RunEvent.PhaseChanged(id, 1, SamplePhase.Generating))
         }

@@ -1,8 +1,8 @@
 package backend.lean.protocol
 
-import java.nio.file.Path
 import prompt.PromptRenderer
 import protocol.TaskProtocolRegistry
+import java.nio.file.Path
 
 /** Registers Lean protocols with separately owned backend and dataset templates. */
 object LeanProtocols {

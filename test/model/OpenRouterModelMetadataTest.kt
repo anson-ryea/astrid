@@ -3,19 +3,23 @@ package model
 import ai.koog.prompt.llm.LLMCapability
 import ai.koog.prompt.llm.LLMProvider
 import ai.koog.prompt.llm.LLModel
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.jsonObject
 
 class OpenRouterModelMetadataTest {
-    private val model = LLModel(LLMProvider.OpenRouter, "test/model",
-        capabilities = listOf(LLMCapability.Completion, LLMCapability.Tools))
-    private val catalogue = Json.parseToJsonElement("""
+    private val model = LLModel(
+        LLMProvider.OpenRouter, "test/model",
+        capabilities = listOf(LLMCapability.Completion, LLMCapability.Tools)
+    )
+    private val catalogue = Json.parseToJsonElement(
+        """
         {"data":[{"id":"test/model","context_length":32000,
           "top_provider":{"max_completion_tokens":8000}}]}
-    """).jsonObject
+    """
+    ).jsonObject
 
     @Test
     fun nullTokenLimitsUseAdvertisedMaximaAndKeepConfiguredCapabilities() {

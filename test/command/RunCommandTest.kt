@@ -6,23 +6,18 @@ import com.github.ajalt.clikt.core.terminal
 import com.github.ajalt.mordant.rendering.AnsiLevel
 import com.github.ajalt.mordant.terminal.Terminal
 import com.github.ajalt.mordant.terminal.TerminalRecorder
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
+import org.junit.jupiter.api.io.TempDir
+import run.JsonBenchmarkRunConfigReader
+import support.SimpleTestDataset
 import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneId
-import kotlin.test.Test
-import kotlin.test.assertContains
-import kotlin.test.assertEquals
-import kotlin.test.assertFails
-import kotlin.test.assertFailsWith
-import kotlin.test.assertFalse
-import kotlin.test.assertTrue
-import kotlin.test.assertNull
-import kotlinx.coroutines.runBlocking
-import org.junit.jupiter.api.io.TempDir
-import run.JsonBenchmarkRunConfigReader
-import support.SimpleTestDataset
+import kotlin.test.*
 
 class RunCommandTest {
     @TempDir
@@ -30,11 +25,22 @@ class RunCommandTest {
 
     @Test
     fun rejectsAnUnimplementedBackendBeforeReadingApiKey() = runBlocking {
-        Files.createDirectory(temporaryDirectory.resolve("dataset"))
-        val command = RunCommand(projectRoot = temporaryDirectory,
+        withContext(Dispatchers.IO) {
+            Files.createDirectory(temporaryDirectory.resolve("dataset"))
+        }
+        val command = RunCommand(
+            projectRoot = temporaryDirectory,
             apiKeyProvider = { error("API key must not be read") })
         val failure = assertFailsWith<IllegalArgumentException> {
-            command.parse(listOf(writeConfig(validConfig).toString(), temporaryDirectory.toString(), "test-run", "--backend", "rocq"))
+            command.parse(
+                listOf(
+                    writeConfig(validConfig).toString(),
+                    temporaryDirectory.toString(),
+                    "test-run",
+                    "--backend",
+                    "rocq"
+                )
+            )
         }
         assertContains(failure.message.orEmpty(), "unsupported formalisation backend: rocq")
         assertFalse(Files.exists(temporaryDirectory.resolve("runs")))
@@ -44,13 +50,21 @@ class RunCommandTest {
     fun acceptsAnEditorSchemaReferenceWithoutChangingTheConfiguration() {
         val reader = JsonBenchmarkRunConfigReader()
         val original = reader.read(writeConfig(validConfig))
-        val annotated = validConfig.replace("\"schema_version\": 1",
-            "\"\$schema\": \"../schemas/run-config-v1.schema.json\", \"schema_version\": 1")
+        val annotated = validConfig.replace(
+            "\"schema_version\": 1",
+            $$"\"$schema\": \"../schemas/run-config-v1.schema.json\", \"schema_version\": 1"
+        )
         assertEquals(original, reader.read(writeConfig(annotated)))
         for (invalid in listOf("null", "7", "\"\"", "\"  \"")) {
             assertFailsWith<IllegalArgumentException> {
-                reader.read(writeConfig(validConfig.replace("\"schema_version\": 1",
-                    "\"\$schema\": $invalid, \"schema_version\": 1")))
+                reader.read(
+                    writeConfig(
+                        validConfig.replace(
+                            "\"schema_version\": 1",
+                            $$"\"$schema\": $$invalid, \"schema_version\": 1"
+                        )
+                    )
+                )
             }
         }
     }
@@ -77,14 +91,31 @@ class RunCommandTest {
     @Test
     fun readsAndValidatesTaskConcurrency() {
         val reader = JsonBenchmarkRunConfigReader()
-        val source = validConfig.replace("\"samples_per_task\": 2,",
-            "\"samples_per_task\": 2, \"max_concurrent_tasks\": 3,")
+        val source = validConfig.replace(
+            "\"samples_per_task\": 2,",
+            "\"samples_per_task\": 2, \"max_concurrent_tasks\": 3,"
+        )
         assertEquals(3, reader.read(writeConfig(source)).toSpecification().maxConcurrentTasks)
-        assertEquals(1, reader.read(writeConfig(source.replace("\"max_concurrent_tasks\": 3",
-            "\"max_concurrent_tasks\": 1"))).toSpecification().maxConcurrentTasks)
+        assertEquals(
+            1, reader.read(
+                writeConfig(
+                    source.replace(
+                        "\"max_concurrent_tasks\": 3",
+                        "\"max_concurrent_tasks\": 1"
+                    )
+                )
+            ).toSpecification().maxConcurrentTasks
+        )
         for (invalid in listOf("null", "0", "-1", "1.5", "\"2\"", "2147483648")) {
             assertFailsWith<IllegalArgumentException>("max_concurrent_tasks=$invalid") {
-                reader.read(writeConfig(source.replace("\"max_concurrent_tasks\": 3", "\"max_concurrent_tasks\": $invalid")))
+                reader.read(
+                    writeConfig(
+                        source.replace(
+                            "\"max_concurrent_tasks\": 3",
+                            "\"max_concurrent_tasks\": $invalid"
+                        )
+                    )
+                )
             }
         }
     }
@@ -103,19 +134,43 @@ class RunCommandTest {
     @Test
     fun readsAndValidatesWorkspaceToolBudget() {
         val config = validConfig.replace("\"supports_tools\": false", "\"supports_tools\": true")
-            .replace("\"max_agent_iterations\": 20", "\"max_agent_iterations\": 80, \"max_workspace_tool_calls_per_attempt\": 12")
+            .replace(
+                "\"max_agent_iterations\": 20",
+                "\"max_agent_iterations\": 80, \"max_workspace_tool_calls_per_attempt\": 12"
+            )
         val specification = JsonBenchmarkRunConfigReader().read(writeConfig(config)).toSpecification()
         assertEquals(12, specification.maxWorkspaceToolCallsPerAttempt)
         assertEquals(0, specification.maxToolCallsPerAttempt)
         assertTrue(specification.workspaceToolsEnabled)
         assertFailsWith<IllegalArgumentException> {
-            JsonBenchmarkRunConfigReader().read(writeConfig(config.replace("\"max_workspace_tool_calls_per_attempt\": 12", "\"max_workspace_tool_calls_per_attempt\": -1")))
+            JsonBenchmarkRunConfigReader().read(
+                writeConfig(
+                    config.replace(
+                        "\"max_workspace_tool_calls_per_attempt\": 12",
+                        "\"max_workspace_tool_calls_per_attempt\": -1"
+                    )
+                )
+            )
         }
         assertFailsWith<IllegalArgumentException> {
-            JsonBenchmarkRunConfigReader().read(writeConfig(config.replace("\"supports_tools\": true", "\"supports_tools\": false")))
+            JsonBenchmarkRunConfigReader().read(
+                writeConfig(
+                    config.replace(
+                        "\"supports_tools\": true",
+                        "\"supports_tools\": false"
+                    )
+                )
+            )
         }
         assertFailsWith<IllegalArgumentException> {
-            JsonBenchmarkRunConfigReader().read(writeConfig(config.replace("\"max_workspace_tool_calls_per_attempt\": 12", "\"max_workspace_tool_calls_per_attempt\": 1.5")))
+            JsonBenchmarkRunConfigReader().read(
+                writeConfig(
+                    config.replace(
+                        "\"max_workspace_tool_calls_per_attempt\": 12",
+                        "\"max_workspace_tool_calls_per_attempt\": 1.5"
+                    )
+                )
+            )
         }
     }
 
@@ -125,7 +180,10 @@ class RunCommandTest {
             .replace("\"context_length\": 32000", "\"context_length\": null")
             .replace("\"max_output_tokens\": 4000", "\"max_output_tokens\": null")
             .replace("\"max_repair_turns\": 1", "\"max_repair_turns\": null")
-            .replace("\"max_agent_iterations\": 20", "\"max_agent_iterations\": null, \"max_tool_calls_per_attempt\": 0, \"max_workspace_tool_calls_per_attempt\": null")
+            .replace(
+                "\"max_agent_iterations\": 20",
+                "\"max_agent_iterations\": null, \"max_tool_calls_per_attempt\": 0, \"max_workspace_tool_calls_per_attempt\": null"
+            )
         val config = JsonBenchmarkRunConfigReader().read(writeConfig(source))
         val specification = config.toSpecification()
         assertNull(specification.model.contextLength)
@@ -136,21 +194,37 @@ class RunCommandTest {
         assertEquals(0, specification.maxToolCallsPerAttempt)
         assertTrue(specification.workspaceToolsEnabled)
 
-        val otherOnly = JsonBenchmarkRunConfigReader().read(writeConfig(source
-            .replace("\"max_tool_calls_per_attempt\": 0", "\"max_tool_calls_per_attempt\": null")
-            .replace("\"max_workspace_tool_calls_per_attempt\": null", "\"max_workspace_tool_calls_per_attempt\": 0"))).toSpecification()
+        val otherOnly = JsonBenchmarkRunConfigReader().read(
+            writeConfig(
+                source
+                    .replace("\"max_tool_calls_per_attempt\": 0", "\"max_tool_calls_per_attempt\": null")
+                    .replace(
+                        "\"max_workspace_tool_calls_per_attempt\": null",
+                        "\"max_workspace_tool_calls_per_attempt\": 0"
+                    )
+            )
+        ).toSpecification()
         assertNull(otherOnly.maxToolCallsPerAttempt)
         assertFalse(otherOnly.workspaceToolsEnabled)
     }
 
     @Test
     fun rejectsInvalidNullableLimitsAndUnlimitedToolsWithoutToolSupport() {
-        val source = validConfig.replace("\"max_agent_iterations\": 20",
-            "\"max_agent_iterations\": 20, \"max_tool_calls_per_attempt\": 0, \"max_workspace_tool_calls_per_attempt\": 0")
+        val source = validConfig.replace(
+            "\"max_agent_iterations\": 20",
+            "\"max_agent_iterations\": 20, \"max_tool_calls_per_attempt\": 0, \"max_workspace_tool_calls_per_attempt\": 0"
+        )
         for (field in listOf("max_tool_calls_per_attempt", "max_workspace_tool_calls_per_attempt")) {
             for (invalid in listOf("null", "-1", "1.5", "\"null\"", "2147483648")) {
                 assertFailsWith<IllegalArgumentException>("$field=$invalid") {
-                    JsonBenchmarkRunConfigReader().read(writeConfig(source.replace("\"$field\": 0", "\"$field\": $invalid")))
+                    JsonBenchmarkRunConfigReader().read(
+                        writeConfig(
+                            source.replace(
+                                "\"$field\": 0",
+                                "\"$field\": $invalid"
+                            )
+                        )
+                    )
                 }
             }
         }
@@ -190,7 +264,9 @@ class RunCommandTest {
     @Test
     fun rejectsNoFrozenTasksBeforeReadingApiKey() {
         runBlocking {
-            Files.createDirectory(temporaryDirectory.resolve("dataset"))
+            withContext(Dispatchers.IO) {
+                Files.createDirectory(temporaryDirectory.resolve("dataset"))
+            }
             val configPath = writeConfig(validConfig)
             val command = RunCommand(
                 projectRoot = temporaryDirectory,
@@ -208,12 +284,23 @@ class RunCommandTest {
 
     @Test
     fun honoursAnExplicitDatasetRootBeforeReadingApiKey() = runBlocking {
-        val dataset = Files.createDirectory(temporaryDirectory.resolve("custom-dataset"))
+        val dataset = withContext(Dispatchers.IO) {
+            Files.createDirectory(temporaryDirectory.resolve("custom-dataset"))
+        }
         val configPath = writeConfig(validConfig)
-        val command = RunCommand(projectRoot = temporaryDirectory,
+        val command = RunCommand(
+            projectRoot = temporaryDirectory,
             apiKeyProvider = { error("API key must not be read") })
         val failure = assertFailsWith<IllegalStateException> {
-            command.parse(listOf(configPath.toString(), temporaryDirectory.toString(), "test-run", "--dataset-root", dataset.toString()))
+            command.parse(
+                listOf(
+                    configPath.toString(),
+                    temporaryDirectory.toString(),
+                    "test-run",
+                    "--dataset-root",
+                    dataset.toString()
+                )
+            )
         }
         assertContains(failure.message.orEmpty(), "no frozen tasks are available for backend lean")
         assertFalse(Files.exists(temporaryDirectory.resolve("runs")))
@@ -221,16 +308,20 @@ class RunCommandTest {
 
     @Test
     fun defaultsToTheCheckoutDatasetAndGeneratesAnIdFromItsFolderName() = runBlocking {
-        val checkout = Files.createDirectory(temporaryDirectory.resolve("Example Corpus.v1"))
+        val checkout = withContext(Dispatchers.IO) {
+            Files.createDirectory(temporaryDirectory.resolve("Example Corpus.v1"))
+        }
         writeFrozenProofManifest(checkout)
         val expectedId = "example_corpus_v1_20261104_120506_123"
-        for (root in listOf<String?>(null, "experiment-runs")) {
+        for (root in listOf(null, "experiment-runs")) {
             val recorder = TerminalRecorder(ansiLevel = AnsiLevel.NONE, width = 512)
-            val command = RunCommand(temporaryDirectory,
-                apiKeyProvider = { error("API key must not be read") }, clock = fixedClock)
+            val command = RunCommand(
+                temporaryDirectory,
+                apiKeyProvider = { error("API key must not be read") }, clock = fixedClock
+            )
             command.configureContext { terminal = Terminal(terminalInterface = recorder) }
             val arguments = listOf(writeConfig(validConfig).toString(), checkout.toString(), "--ui=live") +
-                (root?.let { listOf("--output-root", it) } ?: emptyList())
+                    (root?.let { listOf("--output-root", it) } ?: emptyList())
 
             assertFailsWith<java.nio.file.NoSuchFileException> { command.parse(arguments) }
 
@@ -245,21 +336,40 @@ class RunCommandTest {
     fun defaultsTheLeanEnvironmentToTheCheckoutAndHonoursAnOverride() = runBlocking {
         copyDirectory(SimpleTestDataset.projectRoot.resolve("prompts"), temporaryDirectory.resolve("prompts"))
         val checkout = copyCheckout(temporaryDirectory.resolve("synthetic"), "proof")
-        val external = Files.createDirectory(temporaryDirectory.resolve("external-environment"))
-        Files.writeString(external.resolve("lean-toolchain"), "test-toolchain\n")
+        val external = withContext(Dispatchers.IO) {
+            Files.createDirectory(temporaryDirectory.resolve("external-environment"))
+        }
+        withContext(Dispatchers.IO) {
+            Files.writeString(external.resolve("lean-toolchain"), "test-toolchain\n")
+        }
         val config = validConfig.replace("\"supports_tools\": false", "\"supports_tools\": true")
-            .replace("\"max_agent_iterations\": 20", "\"max_agent_iterations\": 20, \"max_workspace_tool_calls_per_attempt\": 1")
+            .replace(
+                "\"max_agent_iterations\": 20",
+                "\"max_agent_iterations\": 20, \"max_workspace_tool_calls_per_attempt\": 1"
+            )
 
-        for (environmentOverride in listOf<Path?>(null, external)) {
+        for (environmentOverride in listOf(null, external)) {
             val command = RunCommand(temporaryDirectory, apiKeyProvider = { error("API key must not be read") })
-            val arguments = listOf(writeConfig(config).toString(), checkout.toString(), "test-run", "--ui=plain", "--validate-before-run") +
-                (environmentOverride?.let { listOf("--environment-root", it.toString()) } ?: emptyList())
+            val arguments = listOf(
+                writeConfig(config).toString(),
+                checkout.toString(),
+                "test-run",
+                "--ui=plain",
+                "--validate-before-run"
+            ) +
+                    (environmentOverride?.let { listOf("--environment-root", it.toString()) } ?: emptyList())
 
             val failure = assertFailsWith<IllegalArgumentException> { command.parse(arguments) }
 
             // Fail on a missing configuration file before compiling Lean or making model calls.
-            val missing = if (environmentOverride == null) checkout.resolve("lean-toolchain") else external.resolve("lakefile.toml")
-            assertContains(failure.message.orEmpty(), missing.parent.toRealPath().resolve(missing.fileName).toString())
+            val missing =
+                if (environmentOverride == null) checkout.resolve("lean-toolchain") else external.resolve("lakefile.toml")
+            assertContains(
+                failure.message.orEmpty(),
+                withContext(Dispatchers.IO) {
+                    missing.parent.toRealPath()
+                }.resolve(missing.fileName).toString()
+            )
             assertFalse(Files.exists(temporaryDirectory.resolve("runs")))
         }
     }
@@ -271,13 +381,24 @@ class RunCommandTest {
             val checkout = copyCheckout(temporaryDirectory.resolve("corpus-$useOverride"), "definition")
             SimpleTestDataset.mockLeanEnvironment(checkout)
             val evaluation = if (useOverride) temporaryDirectory.resolve("external-contracts")
-                else checkout.resolve("private/evaluation")
-            val contract = evaluation.resolve(SimpleTestDataset.task("definition").manifest.evaluation.contract!!.path.value)
-            Files.createDirectories(contract.parent)
-            Files.writeString(contract, "{}")
+            else checkout.resolve("private/evaluation")
+            val contract =
+                evaluation.resolve(SimpleTestDataset.task("definition").manifest.evaluation.contract!!.path.value)
+            withContext(Dispatchers.IO) {
+                Files.createDirectories(contract.parent)
+            }
+            withContext(Dispatchers.IO) {
+                Files.writeString(contract, "{}")
+            }
             val command = RunCommand(temporaryDirectory, apiKeyProvider = { error("API key must not be read") })
-            val arguments = listOf(writeConfig(validConfig).toString(), checkout.toString(), "test-run", "--ui=plain", "--validate-before-run") +
-                if (useOverride) listOf("--evaluation-root", evaluation.toString()) else emptyList()
+            val arguments = listOf(
+                writeConfig(validConfig).toString(),
+                checkout.toString(),
+                "test-run",
+                "--ui=plain",
+                "--validate-before-run"
+            ) +
+                    if (useOverride) listOf("--evaluation-root", evaluation.toString()) else emptyList()
 
             val failure = assertFailsWith<IllegalArgumentException> { command.parse(arguments) }
 
@@ -295,20 +416,26 @@ class RunCommandTest {
             val checkout = copyCheckout(temporaryDirectory.resolve("corpus-$result"), result)
             val source = SimpleTestDataset.task(result)
             val evidence = checkout.resolve("dataset/paper_1/tasks/${source.manifest.taskId}/evidence.md")
-            Files.writeString(evidence, "changed after hashing")
+            withContext(Dispatchers.IO) {
+                Files.writeString(evidence, "changed after hashing")
+            }
             for (validate in listOf(false, true)) {
                 var apiKeyRead = false
                 val command = RunCommand(temporaryDirectory, apiKeyProvider = {
                     apiKeyRead = true
                     error("reached model setup")
                 })
-                val arguments = listOf(writeConfig(validConfig).toString(), checkout.toString(), "test-run", "--ui=plain") +
-                    if (validate) listOf("--validate-before-run") else emptyList()
+                val arguments =
+                    listOf(writeConfig(validConfig).toString(), checkout.toString(), "test-run", "--ui=plain") +
+                            if (validate) listOf("--validate-before-run") else emptyList()
 
                 val failure = assertFailsWith<IllegalStateException> { command.parse(arguments) }
 
                 assertEquals(!validate, apiKeyRead)
-                assertContains(failure.message.orEmpty(), if (validate) "task artefact hash mismatch" else "reached model setup")
+                assertContains(
+                    failure.message.orEmpty(),
+                    if (validate) "task artefact hash mismatch" else "reached model setup"
+                )
                 assertFalse(Files.exists(temporaryDirectory.resolve("runs")))
             }
         }
@@ -326,7 +453,10 @@ class RunCommandTest {
             val failure = assertFails {
                 command.parse(listOf(configPath.toString(), temporaryDirectory.toString(), "Invalid Run ID"))
             }
-            assertContains(failure.message.orEmpty(), "run ID must use lower-case letters, digits, underscores or hyphens")
+            assertContains(
+                failure.message.orEmpty(),
+                "run ID must use lower-case letters, digits, underscores or hyphens"
+            )
             assertFalse(Files.exists(temporaryDirectory.resolve("runs")))
         }
     }
@@ -340,7 +470,14 @@ class RunCommandTest {
 
         assertFailsWith<java.nio.file.NoSuchFileException> {
             // Missing prompt files fail preflight, before any credentials or model requests.
-            command.parse(listOf(writeConfig(validConfig).toString(), temporaryDirectory.toString(), "test-run", "--ui=live"))
+            command.parse(
+                listOf(
+                    writeConfig(validConfig).toString(),
+                    temporaryDirectory.toString(),
+                    "test-run",
+                    "--ui=live"
+                )
+            )
         }
         assertContains(recorder.output(), "PREPARING")
         assertContains(recorder.output(), "FAILED")
@@ -359,8 +496,12 @@ class RunCommandTest {
             command.configureContext { terminal = Terminal(terminalInterface = recorder) }
 
             assertFailsWith<java.nio.file.NoSuchFileException> {
-                command.parse(listOf(writeConfig(validConfig).toString(), temporaryDirectory.toString(), "test-run",
-                    "--output-root", root, "--ui=live"))
+                command.parse(
+                    listOf(
+                        writeConfig(validConfig).toString(), temporaryDirectory.toString(), "test-run",
+                        "--output-root", root, "--ui=live"
+                    )
+                )
             }
 
             assertContains(recorder.output(), expected.toString())
@@ -371,27 +512,41 @@ class RunCommandTest {
 
     @Test
     fun runPathsBypassTheOutputRootAndRelativePathsUseTheWorkingDirectory() = runBlocking {
-        val working = Files.createDirectory(temporaryDirectory.resolve("working"))
+        val working = withContext(Dispatchers.IO) {
+            Files.createDirectory(temporaryDirectory.resolve("working"))
+        }
         writeFrozenProofManifest(working)
-        val ignoredRoot = Files.createDirectory(working.resolve("ignored-root"))
+        val ignoredRoot = withContext(Dispatchers.IO) {
+            Files.createDirectory(working.resolve("ignored-root"))
+        }
         val sentinel = ignoredRoot.resolve("keep.txt")
-        Files.writeString(sentinel, "other runs")
-        for (output in listOf(temporaryDirectory.resolve("absolute/output").toString(),
-            "relative/Run A.v1", "./direct-run", "../sibling-run")) {
+        withContext(Dispatchers.IO) {
+            Files.writeString(sentinel, "other runs")
+        }
+        for (output in listOf(
+            temporaryDirectory.resolve("absolute/output").toString(),
+            "relative/Run A.v1", "./direct-run", "../sibling-run"
+        )) {
             val expected = working.resolve(output).normalize()
             val recorder = TerminalRecorder(ansiLevel = AnsiLevel.NONE, width = 512)
             val command = RunCommand(working, apiKeyProvider = { error("API key must not be read") })
             command.configureContext { terminal = Terminal(terminalInterface = recorder) }
 
             assertFailsWith<java.nio.file.NoSuchFileException> {
-                command.parse(listOf(writeConfig(validConfig).toString(), working.toString(), output,
-                    "--output-root", ignoredRoot.toString(), "--ui=live"))
+                command.parse(
+                    listOf(
+                        writeConfig(validConfig).toString(), working.toString(), output,
+                        "--output-root", ignoredRoot.toString(), "--ui=live"
+                    )
+                )
             }
 
             assertContains(recorder.output(), expected.toString())
             assertFalse(ignoredRoot.resolve(expected.fileName).toString() in recorder.output())
             assertFalse(Files.exists(expected), "preflight failures must not create run directories")
-            assertEquals("other runs", Files.readString(sentinel))
+            assertEquals("other runs", withContext(Dispatchers.IO) {
+                Files.readString(sentinel)
+            })
             assertFalse(Files.exists(working.resolve("runs")))
         }
     }
@@ -399,11 +554,17 @@ class RunCommandTest {
     @Test
     fun refusesExistingNamedAndPathOutputsWithoutChangingTheirContents() = runBlocking {
         writeFrozenProofManifest()
-        val output = Files.createDirectories(temporaryDirectory.resolve("existing-output/test-run"))
+        val output = withContext(Dispatchers.IO) {
+            Files.createDirectories(temporaryDirectory.resolve("existing-output/test-run"))
+        }
         val saved = output.resolve("keep.txt")
-        Files.writeString(saved, "previous results")
-        for (destination in listOf(listOf(output.toString()),
-            listOf("test-run", "--output-root", output.parent.toString()))) {
+        withContext(Dispatchers.IO) {
+            Files.writeString(saved, "previous results")
+        }
+        for (destination in listOf(
+            listOf(output.toString()),
+            listOf("test-run", "--output-root", output.parent.toString())
+        )) {
             val command = RunCommand(temporaryDirectory, apiKeyProvider = { error("API key must not be read") })
 
             val failure = assertFailsWith<IllegalStateException> {
@@ -411,7 +572,9 @@ class RunCommandTest {
             }
 
             assertContains(failure.message.orEmpty(), "run directory already exists: $output")
-            assertEquals("previous results", Files.readString(saved))
+            assertEquals("previous results", withContext(Dispatchers.IO) {
+                Files.readString(saved)
+            })
             assertFalse(Files.exists(temporaryDirectory.resolve("runs")))
         }
     }
@@ -419,11 +582,17 @@ class RunCommandTest {
     @Test
     fun rejectsSymbolicLinkOutputParentsBeforePreflight() = runBlocking {
         writeFrozenProofManifest()
-        val realParent = Files.createDirectory(temporaryDirectory.resolve("real-output"))
+        val realParent = withContext(Dispatchers.IO) {
+            Files.createDirectory(temporaryDirectory.resolve("real-output"))
+        }
         val linkedParent = temporaryDirectory.resolve("linked-output")
-        Files.createSymbolicLink(linkedParent, realParent)
-        for (destination in listOf(listOf(linkedParent.resolve("run").toString()),
-            listOf("run", "--output-root", linkedParent.toString()))) {
+        withContext(Dispatchers.IO) {
+            Files.createSymbolicLink(linkedParent, realParent)
+        }
+        for (destination in listOf(
+            listOf(linkedParent.resolve("run").toString()),
+            listOf("run", "--output-root", linkedParent.toString())
+        )) {
             val command = RunCommand(temporaryDirectory, apiKeyProvider = { error("API key must not be read") })
 
             val failure = assertFailsWith<IllegalStateException> {
@@ -439,7 +608,14 @@ class RunCommandTest {
     fun validatesUiModeBeforeExecution() = runBlocking {
         val command = RunCommand(temporaryDirectory, apiKeyProvider = { error("API key must not be read") })
         val failure = assertFails {
-            command.parse(listOf(writeConfig("not JSON").toString(), temporaryDirectory.toString(), "test-run", "--ui=invalid"))
+            command.parse(
+                listOf(
+                    writeConfig("not JSON").toString(),
+                    temporaryDirectory.toString(),
+                    "test-run",
+                    "--ui=invalid"
+                )
+            )
         }
         assertContains(failure.message.orEmpty(), "invalid")
         assertContains(failure.message.orEmpty(), "live")
@@ -453,14 +629,33 @@ class RunCommandTest {
         fun command() = RunCommand(SimpleTestDataset.projectRoot, apiKeyProvider = {
             keyCalls++; error("selected tasks reached provider boundary")
         })
-        val base = listOf(writeConfig(validConfig).toString(), checkout.toString(), temporaryDirectory.resolve("output").toString(), "--ui=plain")
+
+        val base = listOf(
+            writeConfig(validConfig).toString(),
+            checkout.toString(),
+            temporaryDirectory.resolve("output").toString(),
+            "--ui=plain"
+        )
         val selected = assertFailsWith<IllegalStateException> {
-            command().parse(base + listOf("--task-id", id, "--paper-id", "paper_1", "--task-type", "2", "--condition", "paper_evidence"))
+            command().parse(
+                base + listOf(
+                    "--task-id",
+                    id,
+                    "--paper-id",
+                    "paper_1",
+                    "--task-type",
+                    "2",
+                    "--condition",
+                    "paper_evidence"
+                )
+            )
         }
         assertContains(selected.message.orEmpty(), "provider boundary")
         assertEquals(1, keyCalls)
-        for (options in listOf(listOf("--paper-id", "paper_99"), listOf("--task-type", "999"),
-            listOf("--condition", "missing"), listOf("--task-id", "task_1.99_missing"))) {
+        for (options in listOf(
+            listOf("--paper-id", "paper_99"), listOf("--task-type", "999"),
+            listOf("--condition", "missing"), listOf("--task-id", "task_1.99_missing")
+        )) {
             assertFailsWith<IllegalArgumentException> { command().parse(base + options) }
         }
         assertEquals(1, keyCalls)
@@ -471,16 +666,21 @@ class RunCommandTest {
         val source = SimpleTestDataset.task("proof")
         val taskDirectory = checkout.resolve("dataset/paper_1/tasks/${source.manifest.taskId}")
         Files.createDirectories(taskDirectory)
-        Files.writeString(taskDirectory.resolve("manifest.json"),
+        Files.writeString(
+            taskDirectory.resolve("manifest.json"),
             Files.readString(source.packageDirectory.resolve("manifest.json"))
-                .replace("candidate_pending_independent_review", "frozen"))
+                .replace("candidate_pending_independent_review", "frozen")
+        )
     }
 
     private fun copyCheckout(directory: Path, result: String): Path {
         copyDirectory(SimpleTestDataset.datasetRoot, directory.resolve("dataset"))
         val task = SimpleTestDataset.task(result)
         val manifest = directory.resolve("dataset/paper_1/tasks/${task.manifest.taskId}/manifest.json")
-        Files.writeString(manifest, Files.readString(manifest).replace("candidate_pending_independent_review", "frozen"))
+        Files.writeString(
+            manifest,
+            Files.readString(manifest).replace("candidate_pending_independent_review", "frozen")
+        )
         return directory.toRealPath()
     }
 

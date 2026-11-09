@@ -2,10 +2,8 @@ package console
 
 import domain.SubmissionKind
 import domain.TaskId
-import java.nio.file.Path
 import run.BenchmarkRunConfig
-
-data class RunTaskProblem(val paper: String, val problem: String)
+import java.nio.file.Path
 
 /** Fixed run information for the dashboard and info page, independent of execution events. */
 data class RunDashboardContext(

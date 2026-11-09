@@ -4,11 +4,8 @@ import domain.EvaluationResult
 import domain.TaskId
 import run.RunEvent
 import run.RunPhase
-import run.SamplePhase
 import run.SampleOutcome
-
-/** Identifies one independent sample even when several tasks are running concurrently. */
-data class SampleKey(val taskId: TaskId, val sampleIndex: Int)
+import run.SamplePhase
 
 /** A snapshot for presentation; only the event consumer creates subsequent snapshots. */
 data class RunDashboardState(
@@ -27,7 +24,7 @@ data class RunDashboardState(
 ) {
     val completedSamples: Int
         get() = acceptedSamples + rejectedSamples + needsReviewSamples + infrastructureFailureSamples +
-            budgetExhaustedSamples + providerFailureSamples + executionFailureSamples
+                budgetExhaustedSamples + providerFailureSamples + executionFailureSamples
 
     internal fun reduce(event: RunEvent): RunDashboardState = when (event) {
         is RunEvent.RunPhaseChanged -> copy(runPhase = event.phase, latestEvent = event)
@@ -35,18 +32,20 @@ data class RunDashboardState(
             activeSamples = activeSamples + (SampleKey(event.taskId, event.sampleIndex) to SamplePhase.Preparing),
             latestEvent = event,
         )
+
         is RunEvent.PhaseChanged -> copy(
             activeSamples = activeSamples + (SampleKey(event.taskId, event.sampleIndex) to event.phase),
             latestEvent = event,
         )
+
         is RunEvent.SampleFinished -> {
             val finished = copy(
                 activeSamples = activeSamples - SampleKey(event.taskId, event.sampleIndex),
                 latestEvent = event,
                 completedSamplesByTask = completedSamplesByTask +
-                    (event.taskId to (completedSamplesByTask.getOrDefault(event.taskId, 0) + 1)),
+                        (event.taskId to (completedSamplesByTask.getOrDefault(event.taskId, 0) + 1)),
                 recentDiagnostics = if (event.outcome == SampleOutcome.Evaluated(EvaluationResult.Accepted)) recentDiagnostics
-                    else (recentDiagnostics + event).takeLast(20),
+                else (recentDiagnostics + event).takeLast(20),
             )
             when (val outcome = event.outcome) {
                 is SampleOutcome.BudgetExhausted -> finished.copy(budgetExhaustedSamples = budgetExhaustedSamples + 1)

@@ -1,65 +1,32 @@
 package console
 
-import com.github.ajalt.mordant.rendering.AnsiLevel
-import com.github.ajalt.mordant.terminal.Terminal
-import com.github.ajalt.mordant.terminal.TerminalRecorder
-import com.github.ajalt.mordant.terminal.TerminalInterface
-import com.github.ajalt.mordant.terminal.PrintRequest
 import com.github.ajalt.mordant.input.InputEvent
 import com.github.ajalt.mordant.input.KeyboardEvent
 import com.github.ajalt.mordant.input.MouseTracking
-import com.github.ajalt.mordant.terminal.TimeoutException
-import domain.EvaluationResult
-import domain.SubmissionKind
-import domain.TaskId
-import domain.BenchmarkTask
-import domain.EvaluationKind
+import com.github.ajalt.mordant.rendering.AnsiLevel
+import com.github.ajalt.mordant.terminal.*
 import dataset.TaskRepository
-import java.nio.file.Path
-import java.nio.file.Files
-import java.io.File
-import java.net.URLClassLoader
-import java.util.concurrent.TimeUnit
-import java.util.concurrent.LinkedBlockingQueue
-import java.util.concurrent.atomic.AtomicBoolean
-import kotlin.coroutines.cancellation.CancellationException
-import kotlin.test.Test
-import kotlin.test.assertContains
-import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
-import kotlin.test.assertFalse
-import kotlin.test.assertTrue
-import kotlin.time.Duration.Companion.seconds
-import kotlin.time.Duration.Companion.milliseconds
-import kotlin.time.TestTimeSource
-import kotlin.time.TimeMark
-import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.async
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.awaitCancellation
-import kotlinx.coroutines.cancelAndJoin
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withTimeout
-import kotlinx.coroutines.yield
-import run.SampleOutcome
-import run.RunEvent
-import run.SamplePhase
-import run.RunPhase
-import support.TerminalScreen
-import org.junit.jupiter.api.io.TempDir
-import run.BenchmarkRunner
-import run.FileRunStore
-import run.TaskSelector
-import run.ScriptedPromptExecutor
-import run.createRunTask
-import run.createRunEngine
-import run.runTestSpecification
+import domain.*
+import kotlinx.coroutines.*
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import org.junit.jupiter.api.io.TempDir
+import run.*
+import support.TerminalScreen
+import java.io.File
+import java.net.URLClassLoader
+import java.nio.file.Files
+import java.nio.file.Path
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.coroutines.cancellation.CancellationException
+import kotlin.test.*
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
+import kotlin.time.TestTimeSource
+import kotlin.time.TimeMark
 
 class RunConsoleTest {
     @TempDir
@@ -138,7 +105,13 @@ class RunConsoleTest {
             assertContains(recorder.output(), "PREPARING")
             assertContains(recorder.output(), "\u001b[")
             onEvent(RunEvent.SampleStarted(context.taskSubmissions.keys.single(), 1))
-            onEvent(RunEvent.SampleFinished(context.taskSubmissions.keys.single(), 1, SampleOutcome.Evaluated(EvaluationResult.Accepted)))
+            onEvent(
+                RunEvent.SampleFinished(
+                    context.taskSubmissions.keys.single(),
+                    1,
+                    SampleOutcome.Evaluated(EvaluationResult.Accepted)
+                )
+            )
         }
         assertContains(recorder.output(), "1/1 tasks")
         assertContains(recorder.output(), "COMPLETE")
@@ -152,7 +125,13 @@ class RunConsoleTest {
             val recorder = TerminalRecorder(width = 120, supportsAnsiCursor = true)
             RunConsole(Terminal(terminalInterface = recorder), context, mode = mode).run { onEvent ->
                 onEvent(RunEvent.SampleStarted(context.taskSubmissions.keys.single(), 1))
-                onEvent(RunEvent.SampleFinished(context.taskSubmissions.keys.single(), 1, SampleOutcome.Evaluated(EvaluationResult.Accepted)))
+                onEvent(
+                    RunEvent.SampleFinished(
+                        context.taskSubmissions.keys.single(),
+                        1,
+                        SampleOutcome.Evaluated(EvaluationResult.Accepted)
+                    )
+                )
             }
             assertEquals(1, Regex("astrid", RegexOption.IGNORE_CASE).findAll(recorder.output()).count())
             assertFalse(recorder.output().contains('\u001b'))
@@ -178,7 +157,10 @@ class RunConsoleTest {
         }
         val screen = TerminalScreen(120, 8)
         screen.write(recorder.output())
-        assertTrue(screen.history.none { it.contains("astrid", ignoreCase = true) }, "old headers were scrolled into history")
+        assertTrue(
+            screen.history.none { it.contains("astrid", ignoreCase = true) },
+            "old headers were scrolled into history"
+        )
         assertEquals(1, screen.lines.count { it.contains("astrid", ignoreCase = true) })
         assertContains(screen.lines.joinToString("\n"), "COMPLETE")
     }
@@ -203,8 +185,10 @@ class RunConsoleTest {
             val output = Files.readString(log)
             assertEquals(0, process.exitValue(), output)
             assertFalse(output.contains("kotlin-logging: initializing"), output)
-            assertTrue(output.lastIndexOf("SLF4J") < output.indexOf("astrid"),
-                "logging diagnostics appeared after the first frame: $output")
+            assertTrue(
+                output.lastIndexOf("SLF4J") < output.indexOf("astrid"),
+                "logging diagnostics appeared after the first frame: $output"
+            )
             val screen = TerminalScreen(120, 12)
             screen.write(output)
             assertTrue(screen.history.none { it.contains("astrid", ignoreCase = true) }, output)
@@ -220,8 +204,10 @@ class RunConsoleTest {
     fun plainModePrintsEveryMilestoneAndDrainsResultsBeforeTheFinalFrame() = runBlocking {
         val recorder = TerminalRecorder(width = 120)
         val task = context.taskSubmissions.keys.single()
-        RunConsole(Terminal(terminalInterface = recorder), context.copy(samplesPerTask = 100),
-            mode = RunConsoleMode.Plain).run { onEvent ->
+        RunConsole(
+            Terminal(terminalInterface = recorder), context.copy(samplesPerTask = 100),
+            mode = RunConsoleMode.Plain
+        ).run { onEvent ->
             onEvent(RunEvent.RunPhaseChanged(RunPhase.Preparing))
             onEvent(RunEvent.RunPhaseChanged(RunPhase.ResolvingModel))
             onEvent(RunEvent.RunPhaseChanged(RunPhase.Running))
@@ -254,7 +240,9 @@ class RunConsoleTest {
             assertTrue(input.rawMode.get())
             onEvent(RunEvent.RunPhaseChanged(RunPhase.Preparing))
             onEvent(RunEvent.SampleStarted(task, 1))
-            input.keys.put(KeyboardEvent("l"))
+            withContext(Dispatchers.IO) {
+                input.keys.put(KeyboardEvent("l"))
+            }
             waitFor("l dashboard")
             val logs = screen().lines.joinToString("\n")
             assertContains(logs, "Preparing tasks")
@@ -262,11 +250,15 @@ class RunConsoleTest {
             assertTrue(Regex("\\d{2}:\\d{2}:\\d{2} {2}◇ Started").containsMatchIn(logs))
             assertEquals("logs", screen().lines.first().trim())
             assertFalse(logs.contains("astrid"))
-            input.keys.put(KeyboardEvent("l"))
+            withContext(Dispatchers.IO) {
+                input.keys.put(KeyboardEvent("l"))
+            }
             waitFor("l logs")
             onEvent(RunEvent.SampleFinished(task, 1, SampleOutcome.Evaluated(EvaluationResult.Accepted)))
             waitFor("1 success")
-            input.keys.put(KeyboardEvent("l"))
+            withContext(Dispatchers.IO) {
+                input.keys.put(KeyboardEvent("l"))
+            }
             waitFor("l dashboard")
             waitFor("Finished $task · sample 1: success")
             val logsAgain = screen().lines.joinToString("\n")
@@ -285,7 +277,9 @@ class RunConsoleTest {
         val input = KeyboardTerminal(recorder)
         assertFailsWith<CancellationException> {
             RunConsole(Terminal(terminalInterface = input), context).run {
-                input.keys.put(KeyboardEvent("c", ctrl = true))
+                withContext(Dispatchers.IO) {
+                    input.keys.put(KeyboardEvent("c", ctrl = true))
+                }
                 awaitCancellation()
             }
         }
@@ -309,11 +303,14 @@ class RunConsoleTest {
             suspend fun waitFor(text: String) = withTimeout(3.seconds) {
                 while (!screen().contains(text)) delay(10.milliseconds)
             }
+
             val running = async {
                 runCatching {
                     RunConsole(Terminal(terminalInterface = input), context, clock.markNow()).run {
                         started.complete(Unit)
-                        try { awaitCancellation() } finally {
+                        try {
+                            awaitCancellation()
+                        } finally {
                             withContext(NonCancellable) {
                                 cleaningUp.complete(Unit)
                                 finishCleanup.await()
@@ -326,10 +323,21 @@ class RunConsoleTest {
                 started.await()
                 when (page) {
                     RunConsolePage.Dashboard -> Unit
-                    RunConsolePage.Logs -> { input.keys.put(KeyboardEvent("l")); waitFor("l dashboard") }
-                    RunConsolePage.Info -> { input.keys.put(KeyboardEvent("i")); waitFor("i dashboard") }
+                    RunConsolePage.Logs -> {
+                        withContext(Dispatchers.IO) {
+                            input.keys.put(KeyboardEvent("l"))
+                        }; waitFor("l dashboard")
+                    }
+
+                    RunConsolePage.Info -> {
+                        withContext(Dispatchers.IO) {
+                            input.keys.put(KeyboardEvent("i"))
+                        }; waitFor("i dashboard")
+                    }
                 }
-                input.keys.put(key)
+                withContext(Dispatchers.IO) {
+                    input.keys.put(key)
+                }
                 withTimeout(3.seconds) { cleaningUp.await() }
                 assertContains(screen(), "QUITTING")
                 assertFalse(screen().contains("CANCELLED"))
@@ -342,7 +350,10 @@ class RunConsoleTest {
                 val result = withTimeout(3.seconds) { running.await() }
                 assertTrue(result.exceptionOrNull() is CancellationException)
                 if (key.key.equals("q", ignoreCase = true)) {
-                    assertEquals(key.key == "Q" || key.shift, (result.exceptionOrNull() as RunQuitException).discardResults)
+                    assertEquals(
+                        key.key == "Q" || key.shift,
+                        (result.exceptionOrNull() as RunQuitException).discardResults
+                    )
                 }
                 assertContains(screen(), "CANCELLED")
                 assertFalse(screen().contains("Quitting… waiting for cleanup"))
@@ -366,20 +377,32 @@ class RunConsoleTest {
             while (!screen().lines.joinToString("\n").contains(text)) delay(10.milliseconds)
         }
         RunConsole(Terminal(terminalInterface = input), context).run { onEvent ->
-            input.keys.put(KeyboardEvent("i"))
+            withContext(Dispatchers.IO) {
+                input.keys.put(KeyboardEvent("i"))
+            }
             waitFor("i dashboard")
             assertEquals("info", screen().lines.first().trim())
-            input.keys.put(KeyboardEvent("End"))
+            withContext(Dispatchers.IO) {
+                input.keys.put(KeyboardEvent("End"))
+            }
             waitFor(task.value)
-            input.keys.put(KeyboardEvent("Home"))
+            withContext(Dispatchers.IO) {
+                input.keys.put(KeyboardEvent("Home"))
+            }
             waitFor("proofs-01")
             onEvent(RunEvent.SampleFinished(task, 1, SampleOutcome.Evaluated(EvaluationResult.Accepted)))
-            input.keys.put(KeyboardEvent("l"))
+            withContext(Dispatchers.IO) {
+                input.keys.put(KeyboardEvent("l"))
+            }
             waitFor("l dashboard")
             waitFor("Finished $task")
-            input.keys.put(KeyboardEvent("i"))
+            withContext(Dispatchers.IO) {
+                input.keys.put(KeyboardEvent("i"))
+            }
             waitFor("i dashboard")
-            input.keys.put(KeyboardEvent("i"))
+            withContext(Dispatchers.IO) {
+                input.keys.put(KeyboardEvent("i"))
+            }
             waitFor("l logs")
             waitFor("1 success")
         }
@@ -390,7 +413,9 @@ class RunConsoleTest {
     @Test
     fun quitFromEveryPageStopsWorkersBeforeKeepingOrDiscardingResults() = runBlocking {
         for (page in RunConsolePage.entries) for (discard in listOf(false, true)) {
-            val root = Files.createDirectory(temporaryDirectory.resolve("${page.name}-$discard"))
+            val root = withContext(Dispatchers.IO) {
+                Files.createDirectory(temporaryDirectory.resolve("${page.name}-$discard"))
+            }
             val task = createRunTask(root)
             val runDirectory = root.resolve("run")
             val sampleDirectory = runDirectory.resolve("tasks/${task.manifest.taskId}/samples/001")
@@ -408,7 +433,11 @@ class RunConsoleTest {
                     if (page == RunConsolePage.Logs) input.keys.put(KeyboardEvent("l"))
                     if (page == RunConsolePage.Info) input.keys.put(KeyboardEvent("i"))
                     input.keys.put(KeyboardEvent(if (discard) "Q" else "q"))
-                    try { awaitCancellation() } finally { stopped.set(true) }
+                    try {
+                        awaitCancellation()
+                    } finally {
+                        stopped.set(true)
+                    }
                 }
             }
             val repository = object : TaskRepository {
@@ -418,31 +447,44 @@ class RunConsoleTest {
             val metadata = context.copy(
                 taskSubmissions = mapOf(task.manifest.taskId to task.manifest.submission.kind), samplesPerTask = 3,
             )
-            val engine = createRunEngine(root, executor, runTestSpecification(samplesPerTask = 3, maxConcurrentTasks = 1))
+            val engine =
+                createRunEngine(root, executor, runTestSpecification(samplesPerTask = 3, maxConcurrentTasks = 1))
             val store = FileRunStore(runDirectory)
             withTimeout(10.seconds) {
                 val failure = assertFailsWith<RunQuitException> {
                     RunConsole(Terminal(terminalInterface = input), metadata).run { onEvent ->
-                        BenchmarkRunner(repository, TaskSelector(setOf(EvaluationKind("test_evaluation"))),
-                            engine, store, onEvent = onEvent).run()
+                        BenchmarkRunner(
+                            repository, TaskSelector(setOf(EvaluationKind("test_evaluation"))),
+                            engine, store, onEvent = onEvent
+                        ).run()
                     }
                 }
                 assertEquals(discard, failure.discardResults)
             }
             assertTrue(stopped.get())
             assertEquals(2, executor.prompts.size)
-            assertEquals(savedRecord, Files.readString(sampleDirectory.resolve("record.json")))
-            assertEquals(savedTrajectory, Files.readString(sampleDirectory.resolve("trajectory.jsonl")))
+            assertEquals(savedRecord, withContext(Dispatchers.IO) {
+                Files.readString(sampleDirectory.resolve("record.json"))
+            })
+            assertEquals(savedTrajectory, withContext(Dispatchers.IO) {
+                Files.readString(sampleDirectory.resolve("trajectory.jsonl"))
+            })
             assertFalse(Files.exists(sampleDirectory.resolveSibling("002/record.json")))
             assertFalse(Files.exists(sampleDirectory.resolveSibling("003/record.json")))
-            val manifest = Json.parseToJsonElement(Files.readString(runDirectory.resolve("run.json"))).jsonObject
+            val manifest = Json.parseToJsonElement(withContext(Dispatchers.IO) {
+                Files.readString(runDirectory.resolve("run.json"))
+            }).jsonObject
             assertEquals("failed", manifest.getValue("status").jsonPrimitive.content)
             assertContains(manifest.getValue("failure_reason").jsonPrimitive.content, "stopped by user")
             assertFalse(input.rawMode.get())
             val screen = TerminalScreen(120, 24).also { it.write(recorder.output()) }.lines.joinToString("\n")
             assertContains(screen, "CANCELLED")
             when (page) {
-                RunConsolePage.Logs -> assertContains(screen, if (discard) "Run output will be discarded" else "1 samples saved")
+                RunConsolePage.Logs -> assertContains(
+                    screen,
+                    if (discard) "Run output will be discarded" else "1 samples saved"
+                )
+
                 RunConsolePage.Dashboard -> assertContains(screen, "1 success")
                 RunConsolePage.Info -> assertContains(screen, "info")
             }

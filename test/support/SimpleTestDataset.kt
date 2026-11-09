@@ -45,6 +45,8 @@ internal object SimpleTestDataset {
         return root
     }
 
-    fun workspaceFactory() = LeanTaskWorkspaceFactory(environmentRoot, datasetRoot,
-        promptRoot = projectRoot.resolve("prompts"), evaluationRoot = evaluationRoot)
+    fun workspaceFactory() = LeanTaskWorkspaceFactory(
+        environmentRoot, datasetRoot,
+        promptRoot = projectRoot.resolve("prompts"), evaluationRoot = evaluationRoot
+    )
 }

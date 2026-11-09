@@ -1,4 +1,4 @@
-package dataset
+package hashing
 
 import domain.Sha256Digest
 import java.nio.ByteBuffer
@@ -19,6 +19,11 @@ class HashCalculator {
         }
         return Sha256Digest(digest.digest().toHexadecimal())
     }
+
+    /** Calculates the SHA-256 digest of UTF-8 text without altering whitespace. */
+    fun sha256(text: String): Sha256Digest = Sha256Digest(
+        MessageDigest.getInstance(SHA_256).digest(text.toByteArray(Charsets.UTF_8)).toHexadecimal(),
+    )
 
     /** Calculates the SHA-256 digest of the file at [path]. */
     fun sha256(path: Path): Sha256Digest {

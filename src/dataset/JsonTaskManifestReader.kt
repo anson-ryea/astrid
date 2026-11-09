@@ -1,33 +1,17 @@
 package dataset
 
-import domain.ArtefactPath
-import domain.ArtefactRole
-import domain.ConditionId
-import domain.ContextId
-import domain.EvaluationKind
-import domain.EvaluationContract
-import domain.EvaluationSpecification
-import domain.PaperId
-import domain.ProtocolId
-import domain.Sha256Digest
-import domain.SourceResultId
-import domain.SubmissionKind
-import domain.SubmissionSpecification
-import domain.TaskArtefact
-import domain.TaskId
-import domain.TaskManifest
-import domain.TaskStatus
-import domain.TaskTypeId
-import java.nio.file.Path
-import kotlin.io.path.Path as pathOf
-import kotlin.io.path.readText
-import kotlin.time.Duration
+import domain.*
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.booleanOrNull
-import kotlinx.serialization.json.intOrNull
+import serialization.booleanValue
+import serialization.intValue
+import serialization.stringValue
+import java.nio.file.Path
+import kotlin.io.path.readText
+import kotlin.time.Duration
+import kotlin.io.path.Path as pathOf
 
 /** Strictly reads a task manifest using the V1 JSON schema. */
 class JsonTaskManifestReader(
@@ -205,73 +189,14 @@ class JsonTaskManifestReader(
         }
     }
 
-    private fun JsonObject.requiredString(
-        manifestPath: Path,
-        field: String,
-    ): String {
-        val primitive = this[field] as? JsonPrimitive
-            ?: fail(
-                manifestPath,
-                "required field '$field' must be a string",
-            )
+    private fun JsonObject.requiredString(manifestPath: Path, field: String): String =
+        this[field].stringValue() ?: fail(manifestPath, "required field '$field' must be a string")
 
-        if (!primitive.isString) {
-            fail(
-                manifestPath,
-                "required field '$field' must be a string",
-            )
-        }
+    private fun JsonObject.requiredInt(manifestPath: Path, field: String): Int =
+        this[field].intValue() ?: fail(manifestPath, "required field '$field' must be an integer")
 
-        return primitive.content
-    }
-
-    private fun JsonObject.requiredInt(
-        manifestPath: Path,
-        field: String,
-    ): Int {
-        val primitive = this[field] as? JsonPrimitive
-            ?: fail(
-                manifestPath,
-                "required field '$field' must be an integer",
-            )
-
-        if (primitive.isString) {
-            fail(
-                manifestPath,
-                "required field '$field' must be an integer",
-            )
-        }
-
-        return primitive.intOrNull
-            ?: fail(
-                manifestPath,
-                "required field '$field' must be an integer",
-            )
-    }
-
-    private fun JsonObject.requiredBoolean(
-        manifestPath: Path,
-        field: String,
-    ): Boolean {
-        val primitive = this[field] as? JsonPrimitive
-            ?: fail(
-                manifestPath,
-                "required field '$field' must be a boolean",
-            )
-
-        if (primitive.isString) {
-            fail(
-                manifestPath,
-                "required field '$field' must be a boolean",
-            )
-        }
-
-        return primitive.booleanOrNull
-            ?: fail(
-                manifestPath,
-                "required field '$field' must be a boolean",
-            )
-    }
+    private fun JsonObject.requiredBoolean(manifestPath: Path, field: String): Boolean =
+        this[field].booleanValue() ?: fail(manifestPath, "required field '$field' must be a boolean")
 
     private fun JsonObject.requiredObject(
         manifestPath: Path,

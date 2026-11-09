@@ -2,8 +2,8 @@ package evaluation
 
 import domain.BenchmarkTask
 import domain.EvaluationKind
-import domain.EvaluationResult
 import domain.EvaluationReport
+import domain.EvaluationResult
 
 /** Evaluates submissions for one kind of task evaluation. */
 interface TaskEvaluator {

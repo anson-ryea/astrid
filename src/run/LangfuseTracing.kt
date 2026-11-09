@@ -9,7 +9,7 @@ import io.opentelemetry.kotlin.ExperimentalApi
 import io.opentelemetry.kotlin.export.OperationResultCode
 import io.opentelemetry.kotlin.tracing.export.SpanProcessor
 import io.opentelemetry.kotlin.tracing.export.batchSpanProcessor
-import java.util.Base64
+import java.util.*
 
 /** One Langfuse session per benchmark run, with independently owned telemetry for every sample. */
 class LangfuseTracing(

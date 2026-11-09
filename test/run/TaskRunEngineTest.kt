@@ -6,23 +6,16 @@ import ai.koog.prompt.message.MessagePart
 import ai.koog.prompt.message.ResponseMetaInfo
 import domain.EvaluationResult
 import domain.TaskStatus
-import java.nio.file.Path
-import kotlin.test.Test
-import kotlin.test.assertContains
-import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
-import kotlin.test.assertIs
-import kotlin.test.assertNull
-import kotlin.test.assertSame
-import kotlin.test.assertTrue
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
-import kotlin.coroutines.cancellation.CancellationException
+import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.jupiter.api.io.TempDir
+import java.nio.file.Path
+import kotlin.coroutines.cancellation.CancellationException
+import kotlin.test.*
 
 class TaskRunEngineTest {
     @TempDir
@@ -32,16 +25,24 @@ class TaskRunEngineTest {
     fun semanticRejectionIsTerminalAndPrivateDiagnosticsNeverBecomeRepairPrompts() = runBlocking {
         val task = createRunTask(temporaryDirectory)
         val executor = ScriptedPromptExecutor(listOf("candidate", "must not be called"))
-        val evidence = domain.EvaluationEvidence("a".repeat(64), mapOf("Specification.lean" to "b".repeat(64)), "passed",
-            obligations = listOf(domain.CheckEvidence("AstridSpec.agreement", "unresolved", "proved")))
-        val engine = createRunEngine(temporaryDirectory, executor,
-            detailedAssessment = { _, _ -> domain.EvaluationReport(
-                EvaluationResult.Rejected("private semantic disagreement"), evidence, publicDiagnostic = null) })
+        val evidence = domain.EvaluationEvidence(
+            "a".repeat(64), mapOf("Specification.lean" to "b".repeat(64)), "passed",
+            obligations = listOf(domain.CheckEvidence("AstridSpec.agreement", "unresolved", "proved"))
+        )
+        val engine = createRunEngine(
+            temporaryDirectory, executor,
+            detailedAssessment = { _, _ ->
+                domain.EvaluationReport(
+                    EvaluationResult.Rejected("private semantic disagreement"), evidence, publicDiagnostic = null
+                )
+            })
         val record = engine.run(task, 1)
         assertEquals(1, executor.prompts.size)
         assertIs<EvaluationResult.Rejected>(assertIs<SampleOutcome.Evaluated>(record.outcome).result)
         assertEquals(evidence, record.turns.single().evaluationEvidence)
-        assertTrue(executor.prompts.none { it.messages.toString().contains("AstridSpec") || it.messages.toString().contains("private semantic") })
+        assertTrue(executor.prompts.none {
+            it.messages.toString().contains("AstridSpec") || it.messages.toString().contains("private semantic")
+        })
     }
 
     @Test
@@ -49,7 +50,8 @@ class TaskRunEngineTest {
         val task = createRunTask(temporaryDirectory)
         val executor = ScriptedPromptExecutor(listOf("first", "second", "third", "accepted"))
         val specification = runTestSpecification(maxRepairTurns = null).copy(maxAgentIterations = null)
-        val engine = createRunEngine(temporaryDirectory, executor, specification,
+        val engine = createRunEngine(
+            temporaryDirectory, executor, specification,
             assessSubmission = { _, submission ->
                 if (submission == "accepted") EvaluationResult.Accepted else EvaluationResult.Rejected("retry")
             })
@@ -87,7 +89,8 @@ class TaskRunEngineTest {
                 listOf("LLMCallStartingEvent", "LLMCallCompletedEvent"),
                 record.trajectory.filter { it.kind.startsWith("LLMCall") }.map { it.kind },
             )
-            val recordedPrompt = record.trajectory.first { it.kind == "LLMCallStartingEvent" }.details["prompt"]!!.jsonObject
+            val recordedPrompt =
+                record.trajectory.first { it.kind == "LLMCallStartingEvent" }.details["prompt"]!!.jsonObject
             assertTrue(recordedPrompt["messages"]!!.jsonArray.toString().contains(record.taskPrompt))
             val request = record.trajectory.first { it.kind == "LLMCallStartingEvent" }
             assertEquals(request.timestampEpochMillis, request.details["timestamp"]!!.jsonPrimitive.content.toLong())
@@ -145,7 +148,8 @@ class TaskRunEngineTest {
             response["metaInfo"]!!.jsonObject["outputTokensCount"]!!.jsonPrimitive.content.toInt(),
         )
         assertTrue(response["parts"]!!.jsonArray.toString().contains("reasoning-only reply"))
-        assertEquals(listOf(SamplePhase.Preparing, SamplePhase.Generating),
+        assertEquals(
+            listOf(SamplePhase.Preparing, SamplePhase.Generating),
             events.filterIsInstance<RunEvent.PhaseChanged>().map { it.phase })
     }
 
@@ -174,10 +178,12 @@ class TaskRunEngineTest {
             assertEquals(listOf("bad", "good"), record.turns.map { it.submission })
             assertEquals("Repair: Lean rejected the proof", record.turns[1].userMessage)
             assertEquals(2, executor.prompts.size)
-            assertEquals<List<RunEvent>>(listOf(
-                SamplePhase.Preparing, SamplePhase.Generating, SamplePhase.Evaluating,
-                SamplePhase.Repairing, SamplePhase.Generating, SamplePhase.Evaluating,
-            ).map { RunEvent.PhaseChanged(task.manifest.taskId, 1, it) }, events)
+            assertEquals(
+                listOf(
+                    SamplePhase.Preparing, SamplePhase.Generating, SamplePhase.Evaluating,
+                    SamplePhase.Repairing, SamplePhase.Generating, SamplePhase.Evaluating,
+                ).map { RunEvent.PhaseChanged(task.manifest.taskId, 1, it) }, events.toList()
+            )
             assertEquals(
                 listOf(
                     "LLMCallStartingEvent", "LLMCallCompletedEvent",
@@ -259,11 +265,14 @@ class TaskRunEngineTest {
     fun providerFailureDuringRepairPreservesEarlierAssessmentWithoutReusingItsVerdict() = runBlocking {
         val task = createRunTask(temporaryDirectory)
         val executor = ScriptedPromptExecutor(listOf("bad", "provider failure")) {
-            if (it == "provider failure") throw IllegalStateException("client wrapper",
-                LLMClientException("synthetic", "provider unavailable"))
+            if (it == "provider failure") throw IllegalStateException(
+                "client wrapper",
+                LLMClientException("synthetic", "provider unavailable")
+            )
             Message.Assistant(it, ResponseMetaInfo.Empty)
         }
-        val record = createRunEngine(temporaryDirectory, executor,
+        val record = createRunEngine(
+            temporaryDirectory, executor,
             assessSubmission = { _, _ -> EvaluationResult.Rejected("bad proof") }).run(task, 1)
         val failure = assertIs<SampleOutcome.ProviderFailure>(record.outcome)
         assertIs<EvaluationResult.Rejected>(record.turns.single().result)
@@ -276,7 +285,8 @@ class TaskRunEngineTest {
         val task = createRunTask(temporaryDirectory)
         val expected = EvaluationResult.InfrastructureFailure("Lean unavailable")
         val executor = ScriptedPromptExecutor(listOf("proof", "unused"))
-        val record = createRunEngine(temporaryDirectory, executor,
+        val record = createRunEngine(
+            temporaryDirectory, executor,
             assessSubmission = { _, _ -> expected }).run(task, 1)
         assertEquals(SampleOutcome.Evaluated(expected), record.outcome)
         assertEquals(1, executor.prompts.size)
@@ -289,7 +299,8 @@ class TaskRunEngineTest {
             Message.Assistant(it, ResponseMetaInfo.Empty, finishReason = if (it == "truncated") "length" else "stop")
         }
         var evaluations = 0
-        val record = createRunEngine(temporaryDirectory, executor,
+        val record = createRunEngine(
+            temporaryDirectory, executor,
             assessSubmission = { _, _ -> evaluations++; EvaluationResult.Rejected("bad proof") }).run(task, 1)
         val budget = assertIs<SampleOutcome.BudgetExhausted>(record.outcome)
         assertEquals(SampleBudget.OUTPUT_TOKENS, budget.limit)
@@ -345,8 +356,10 @@ class TaskRunEngineTest {
             delivered.close()
             consumer.join()
         }
-        assertEquals<List<RunEvent>>(listOf(SamplePhase.Preparing, SamplePhase.Generating, SamplePhase.Evaluating)
-            .map { RunEvent.PhaseChanged(task.manifest.taskId, 2, it) }, events)
+        assertEquals(
+            listOf(SamplePhase.Preparing, SamplePhase.Generating, SamplePhase.Evaluating)
+                .map { RunEvent.PhaseChanged(task.manifest.taskId, 2, it) }, events.toList()
+        )
     }
 
     @Test

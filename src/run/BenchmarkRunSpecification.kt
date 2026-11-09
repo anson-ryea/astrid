@@ -22,21 +22,10 @@ data class BenchmarkRunSpecification(
 
     init {
         require(model.id.isNotBlank()) { "model ID must not be blank" }
-        require(samplesPerTask > 0) { "samples per task must be positive" }
-        require(maxConcurrentTasks > 0) { "maximum concurrent tasks must be positive" }
-        require(maxToolCallsPerAttempt == null || maxToolCallsPerAttempt >= 0) {
-            "maximum tool calls per attempt must not be negative"
-        }
-        require(maxWorkspaceToolCallsPerAttempt == null || maxWorkspaceToolCallsPerAttempt >= 0) {
-            "maximum workspace tool calls per attempt must not be negative"
-        }
-        require(maxAgentIterations == null || maxAgentIterations > 0) {
-            "maximum agent iterations must be positive"
-        }
-        require(model.maxOutputTokens == null ||
-                model.maxOutputTokens in 1L..Int.MAX_VALUE.toLong()) {
-            "maximum output tokens must fit Koog's request limit"
-        }
+        requireSampleCounts(samplesPerTask, maxConcurrentTasks)
+        requireToolCallLimits(maxToolCallsPerAttempt, maxWorkspaceToolCallsPerAttempt)
+        requireAgentIterationLimit(maxAgentIterations)
+        requireOutputTokenLimit(model.maxOutputTokens)
         require(
             (maxToolCallsPerAttempt == 0 && maxWorkspaceToolCallsPerAttempt == 0) ||
                     model.supports(LLMCapability.Tools)

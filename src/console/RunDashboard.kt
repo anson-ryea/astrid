@@ -1,9 +1,9 @@
 package console
 
-import com.github.ajalt.mordant.rendering.TextColors.*
 import com.github.ajalt.mordant.rendering.TextColors
-import com.github.ajalt.mordant.rendering.TextStyles.bold
+import com.github.ajalt.mordant.rendering.TextColors.*
 import com.github.ajalt.mordant.rendering.TextStyles.Companion.hyperlink
+import com.github.ajalt.mordant.rendering.TextStyles.bold
 import com.github.ajalt.mordant.rendering.TextStyles.underline
 import com.github.ajalt.mordant.rendering.Widget
 import com.github.ajalt.mordant.table.ColumnWidth
@@ -13,10 +13,11 @@ import com.github.ajalt.mordant.widgets.ProgressBar
 import com.github.ajalt.mordant.widgets.Spinner
 import com.github.ajalt.mordant.widgets.Text
 import com.github.ajalt.mordant.widgets.Viewport
-import kotlin.time.Duration
-import java.util.Locale
-import run.SamplePhase
 import run.RunPhase
+import run.SamplePhase
+import text.singleLine
+import java.util.*
+import kotlin.time.Duration
 
 /** Builds one frame without changing execution state or writing to the terminal. */
 class RunDashboard(private val context: RunDashboardContext) {
@@ -35,7 +36,7 @@ class RunDashboard(private val context: RunDashboardContext) {
         val spinnerTick = (elapsed.inWholeMilliseconds.coerceAtLeast(0) / 250 % 4).toInt()
         fun line(text: String): Widget = Viewport(Text(text), width = contentWidth, height = 1)
         val title = magenta(bold("astrid")) + "  " + gray(singleLine(context.runId)) +
-            if (contentWidth >= 100) gray(" · ${singleLine(context.modelId)}") else ""
+                if (contentWidth >= 100) gray(" · ${singleLine(context.modelId)}") else ""
         val header = horizontalLayout {
             spacing = 1
             column(0) { this.width = ColumnWidth.Expand() }
@@ -45,40 +46,46 @@ class RunDashboard(private val context: RunDashboardContext) {
         }
         val pathLabelWidth = maxOf(context.datasetName.length, "output".length)
         val dataset = gray(singleLine(context.datasetName).padEnd(pathLabelWidth)) + "  " +
-            (green + underline + hyperlink(context.datasetPath.toUri().toASCIIString()))(
-                singleLine(context.datasetPath.toString()),
-            )
+                (green + underline + hyperlink(context.datasetPath.toUri().toASCIIString()))(
+                    singleLine(context.datasetPath.toString()),
+                )
         val output = context.outputPath?.toAbsolutePath()?.normalize()?.let { path ->
             gray("output".padEnd(pathLabelWidth)) + "  " +
-                (green + underline + hyperlink(path.toUri().toASCIIString()))(singleLine(path.toString()))
+                    (green + underline + hyperlink(path.toUri().toASCIIString()))(singleLine(path.toString()))
         }
         val samples = if (context.samplesPerTask > 1)
             " · ${state.completedSamples}/${context.totalSamples} samples" else ""
         val progressLabel = "$completed/${context.totalTasks} tasks$samples"
         val stats = buildList {
-            addAll(listOf(
-                "✓ ${state.acceptedSamples} success" to green,
-                "⚠ ${state.needsReviewSamples} review" to yellow,
-                "× ${state.rejectedSamples} failed" to red,
-                "! ${state.infrastructureFailureSamples} ${if (state.infrastructureFailureSamples == 1) "error" else "errors"}" to red,
-            ))
+            addAll(
+                listOf(
+                    "✓ ${state.acceptedSamples} success" to green,
+                    "⚠ ${state.needsReviewSamples} review" to yellow,
+                    "× ${state.rejectedSamples} failed" to red,
+                    "! ${state.infrastructureFailureSamples} ${if (state.infrastructureFailureSamples == 1) "error" else "errors"}" to red,
+                )
+            )
             if (state.budgetExhaustedSamples > 0) add("↯ ${state.budgetExhaustedSamples} budget exhausted" to yellow)
             if (state.providerFailureSamples > 0) add("! ${state.providerFailureSamples} provider ${if (state.providerFailureSamples == 1) "error" else "errors"}" to red)
             if (state.executionFailureSamples > 0) add("! ${state.executionFailureSamples} execution ${if (state.executionFailureSamples == 1) "error" else "errors"}" to red)
         }
         val outcomes = stats.joinToString("  ") { (text, colour) -> colour(text) }
-        val barWidth = minOf((contentWidth / 5).coerceIn(6, 24),
-            (contentWidth - progressLabel.length - 2).coerceAtLeast(1))
+        val barWidth = minOf(
+            (contentWidth / 5).coerceIn(6, 24),
+            (contentWidth - progressLabel.length - 2).coerceAtLeast(1)
+        )
         val singleSummaryRow = barWidth + 2 + progressLabel.length + 3 +
-            stats.sumOf { it.first.length } + (stats.size - 1) * 2 <= contentWidth
+                stats.sumOf { it.first.length } + (stats.size - 1) * 2 <= contentWidth
         val progress = horizontalLayout {
             spacing = 2
-            cell(ProgressBar(
-                total = context.totalTasks.toLong(), completed = completed.toLong(),
-                width = barWidth,
-                pendingChar = "─", completeChar = "━", separatorChar = "╸",
-                pendingStyle = gray, completeStyle = green, finishedStyle = green,
-            ))
+            cell(
+                ProgressBar(
+                    total = context.totalTasks.toLong(), completed = completed.toLong(),
+                    width = barWidth,
+                    pendingChar = "─", completeChar = "━", separatorChar = "╸",
+                    pendingStyle = gray, completeStyle = green, finishedStyle = green,
+                )
+            )
             cell(gray(progressLabel))
         }
         val summaryRows = buildList {
@@ -98,7 +105,9 @@ class RunDashboard(private val context: RunDashboardContext) {
                         row = ""
                         rowWidth = 0
                     }
-                    if (rowWidth > 0) { row += "  "; rowWidth += 2 }
+                    if (rowWidth > 0) {
+                        row += "  "; rowWidth += 2
+                    }
                     row += colour(text)
                     rowWidth += text.length
                 }
@@ -119,7 +128,7 @@ class RunDashboard(private val context: RunDashboardContext) {
         val showDataset = availableHeight >= summary.size + 4
         val showOutput = output != null && showDataset && availableHeight >= summary.size + 5
         val fixedRows = (if (availableHeight > 1) 1 else 0) + summary.size + 1 +
-            (if (showDataset) 1 else 0) + (if (showOutput) 1 else 0)
+                (if (showDataset) 1 else 0) + (if (showOutput) 1 else 0)
         val activityRows = if (status == RunDashboardStatus.Running && active.isNotEmpty()) 2 else 1
         // Retain normal spacing until the content needs its rows, then compact gradually.
         val spacerRows = (availableHeight - fixedRows - activityRows).coerceIn(0, 3)
@@ -215,11 +224,13 @@ class RunDashboard(private val context: RunDashboardContext) {
             cell(" $id")
             if (suffix.isNotEmpty()) cell(gray(suffix))
         }
+
         var used = 0
         var shown = 0
         val tokens = mutableListOf<Widget>()
         for ((sample, phase) in active) {
-            val suffix = if (context.samplesPerTask > 1) " (sample ${sample.sampleIndex}/${context.samplesPerTask})" else ""
+            val suffix =
+                if (context.samplesPerTask > 1) " (sample ${sample.sampleIndex}/${context.samplesPerTask})" else ""
             val text = "◐ ${sample.taskId.value}$suffix"
             val separator = if (shown == 0) 0 else 3
             val remaining = active.size - shown - 1
@@ -248,10 +259,6 @@ class RunDashboard(private val context: RunDashboardContext) {
             if (shown < active.size) cell(gray("+${active.size - shown} more"))
         }
     }
-
-    private fun singleLine(text: String): String = text.map { character ->
-        if (character.isISOControl() || character == '\u2028' || character == '\u2029') ' ' else character
-    }.joinToString("")
 
     internal fun formatElapsed(elapsed: Duration): String {
         val seconds = elapsed.inWholeSeconds.coerceAtLeast(0)

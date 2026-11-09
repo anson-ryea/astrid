@@ -1,17 +1,18 @@
 package analysis
 
-import domain.ConditionId
-import domain.PaperId
-import domain.SourceResultId
-import domain.TaskId
-import domain.TaskTypeId
-import java.nio.file.Files
-import java.nio.file.LinkOption.NOFOLLOW_LINKS
-import java.nio.file.Path
+import domain.*
 import kotlinx.serialization.json.*
 import run.RunTaskMetadata
 import run.SampleBudget
-import run.SampleResources
+import run.SampleOutcome
+import run.serialization.EvaluationResultJson
+import run.serialization.SampleOutcomeJson
+import run.serialization.SampleResourcesJson
+import serialization.intValue
+import serialization.nonBlankString
+import java.nio.file.Files
+import java.nio.file.LinkOption.NOFOLLOW_LINKS
+import java.nio.file.Path
 
 /** Reads summaries only: trajectories, outputs, prompts and private specifications are never interpreted. */
 class SavedRunReader {
@@ -21,7 +22,8 @@ class SavedRunReader {
         require(document.int("schema_version") == 1) { "unsupported run metadata schema in $root" }
         val status = document.string("status")
         require(status in setOf("running", "complete", "failed")) { "unknown run status in $root: $status" }
-        val samplesPerTask = document.int("samples_per_task").also { require(it > 0) { "samples_per_task must be positive" } }
+        val samplesPerTask =
+            document.int("samples_per_task").also { require(it > 0) { "samples_per_task must be positive" } }
         val taskIds = document.array("task_ids").map { value ->
             val id = value as? JsonPrimitive
             require(id != null && id.isString) { "task_ids must contain strings" }
@@ -52,14 +54,17 @@ class SavedRunReader {
                 } catch (failure: IllegalArgumentException) {
                     throw IllegalArgumentException("invalid sample $recordPath: ${failure.message}", failure)
                 }
-                require(sample.taskId == taskId && sampleDirectory.fileName.toString().toIntOrNull() == sample.sampleIndex) {
+                require(
+                    sample.taskId == taskId && sampleDirectory.fileName.toString().toIntOrNull() == sample.sampleIndex
+                ) {
                     "sample identity disagrees with its directory: $recordPath"
                 }
                 require(sample.sampleIndex in 1..samplesPerTask) { "sample index outside configured range: $recordPath" }
                 samples += sample
             }
         }
-        require(samples.map { it.taskId to it.sampleIndex }.distinct().size == samples.size) { "duplicate saved sample identities in $root" }
+        require(samples.map { it.taskId to it.sampleIndex }
+            .distinct().size == samples.size) { "duplicate saved sample identities in $root" }
         val expected = taskIds.size.toLong() * samplesPerTask
         require(status != "complete" || samples.size.toLong() == expected) {
             "complete run is missing sample records: ${samples.size}/$expected in $root"
@@ -71,9 +76,19 @@ class SavedRunReader {
             if (metadata.size < taskIds.size) add("${taskIds.size - metadata.size} task(s) lack analysis metadata; their breakdown labels are unknown. Supply --dataset-root to enrich older runs.")
             if (metadata.values.any { it.source == "current_dataset" }) add("Some labels come from the current dataset checkout, not a historical snapshot; they do not establish experiment provenance.")
         }
-        return SavedRun(root, status, modelId, samplesPerTask, taskIds.sorted(), metadata,
+        return SavedRun(
+            root, status, modelId, samplesPerTask, taskIds.sorted(), metadata,
             samples.sortedWith(compareBy({ it.taskId }, { it.sampleIndex })),
-            JsonObject(document.filterKeys { it !in setOf("task_ids", "task_metadata", "status", "schema_version", "failure_reason") }), warnings)
+            JsonObject(document.filterKeys {
+                it !in setOf(
+                    "task_ids",
+                    "task_metadata",
+                    "status",
+                    "schema_version",
+                    "failure_reason"
+                )
+            }), warnings
+        )
     }
 
     private fun readMetadata(value: JsonObject) = RunTaskMetadata(
@@ -100,30 +115,18 @@ class SavedRunReader {
         }
         var budget: SampleBudget? = null
         val category = when (version) {
-            5, 6 -> {
-                val outcome = value.obj("outcome")
-                when (outcome.string("kind")) {
-                    "evaluated", "repair_limit" -> {
-                        outcome.fields("kind", "result")
-                        val result = verdict(outcome["result"], legacy = false)
-                        require(outcome.string("kind") != "repair_limit" || result == SampleCategory.REJECTED) { "repair_limit must contain a rejection" }
-                        result
-                    }
-                    "budget_exhausted" -> {
-                        outcome.fields("kind", "limit", "reason")
-                        outcome.string("reason")
-                        budget = SampleBudget.entries.singleOrNull { it.manifestValue == outcome.string("limit") }
-                            ?: throw IllegalArgumentException("unknown sample budget")
-                        SampleCategory.BUDGET_EXHAUSTED
-                    }
-                    "provider_failure", "execution_failure" -> {
-                        outcome.fields("kind", "reason")
-                        outcome.string("reason")
-                        if (outcome.string("kind") == "provider_failure") SampleCategory.PROVIDER_FAILURE else SampleCategory.EXECUTION_FAILURE
-                    }
-                    else -> throw IllegalArgumentException("unknown sample outcome")
+            5, 6 -> when (val outcome = SampleOutcomeJson.decode(value.obj("outcome"))) {
+                is SampleOutcome.Evaluated -> outcome.result.category(legacy = false)
+                is SampleOutcome.RepairLimitReached -> SampleCategory.REJECTED
+                is SampleOutcome.BudgetExhausted -> {
+                    budget = outcome.limit
+                    SampleCategory.BUDGET_EXHAUSTED
                 }
+
+                is SampleOutcome.ProviderFailure -> SampleCategory.PROVIDER_FAILURE
+                is SampleOutcome.ExecutionFailure -> SampleCategory.EXECUTION_FAILURE
             }
+
             4 -> {
                 val termination = value.obj("termination")
                 val result = value["final_result"]
@@ -132,6 +135,7 @@ class SavedRunReader {
                     "evaluated", "repair_limit" -> verdict(result, legacy = false).also {
                         require(kind != "repair_limit" || it == SampleCategory.REJECTED) { "repair_limit must contain a rejection" }
                     }
+
                     else -> {
                         require(result == JsonNull) { "interrupted sample cannot contain a final verdict" }
                         termination.string("reason")
@@ -152,44 +156,53 @@ class SavedRunReader {
                     }
                 }
             }
+
             else -> verdict(value["final_result"], legacy = true)
         }
-        if (version >= 4 && category in setOf(SampleCategory.ACCEPTED, SampleCategory.REJECTED, SampleCategory.NEEDS_REVIEW, SampleCategory.EVALUATOR_FAILURE)) {
+        if (version >= 4 && category in setOf(
+                SampleCategory.ACCEPTED,
+                SampleCategory.REJECTED,
+                SampleCategory.NEEDS_REVIEW,
+                SampleCategory.EVALUATOR_FAILURE
+            )
+        ) {
             require(turns.isNotEmpty() && turns.last() == category) { "final verdict disagrees with last assessed turn" }
         }
         require(turns.dropLast(1).none { it == null }) { "only the final turn may be unassessed" }
-        return SavedSample(taskId, sampleIndex, version, category, budget,
+        return SavedSample(
+            taskId, sampleIndex, version, category, budget,
             turns.firstOrNull() == SampleCategory.ACCEPTED,
-            turns.firstOrNull()?.let { it !in setOf(SampleCategory.EVALUATOR_FAILURE, SampleCategory.LEGACY_INFRASTRUCTURE_FAILURE) } ?: false,
+            turns.firstOrNull()
+                ?.let { it !in setOf(SampleCategory.EVALUATOR_FAILURE, SampleCategory.LEGACY_INFRASTRUCTURE_FAILURE) }
+                ?: false,
             (turns.size - 1).coerceAtLeast(0),
             if (version >= 6) value["resources"].let {
                 require(it != null) { "missing resources field" }
                 if (it == JsonNull) null else {
                     require(it is JsonObject) { "resources must be an object or null" }
-                    SampleResources.fromJson(it)
+                    SampleResourcesJson.decode(it)
                 }
             } else null)
     }
 
-    private fun verdict(value: JsonElement?, legacy: Boolean): SampleCategory {
-        require(value is JsonObject) { "evaluation verdict must be an object" }
-        val kind = value.string("kind")
-        if (kind != "accepted") value.string("reason")
-        return when (kind) {
-            "accepted" -> SampleCategory.ACCEPTED
-            "rejected" -> SampleCategory.REJECTED
-            "needs_review" -> SampleCategory.NEEDS_REVIEW
-            "infrastructure_failure" -> if (legacy) SampleCategory.LEGACY_INFRASTRUCTURE_FAILURE else SampleCategory.EVALUATOR_FAILURE
-            else -> throw IllegalArgumentException("unknown evaluation verdict: $kind")
-        }
+    private fun verdict(value: JsonElement?, legacy: Boolean): SampleCategory =
+        EvaluationResultJson.decode(value).category(legacy)
+
+    private fun EvaluationResult.category(legacy: Boolean): SampleCategory = when (this) {
+        EvaluationResult.Accepted -> SampleCategory.ACCEPTED
+        is EvaluationResult.Rejected -> SampleCategory.REJECTED
+        is EvaluationResult.NeedsReview -> SampleCategory.NEEDS_REVIEW
+        is EvaluationResult.InfrastructureFailure -> if (legacy) SampleCategory.LEGACY_INFRASTRUCTURE_FAILURE else SampleCategory.EVALUATOR_FAILURE
     }
 
     private fun directories(path: Path): List<Path> {
         if (Files.notExists(path, NOFOLLOW_LINKS)) return emptyList()
         require(Files.isDirectory(path, NOFOLLOW_LINKS)) { "expected a directory without symlinks: $path" }
-        return Files.list(path).use { entries -> entries.sorted().toList().onEach {
-            require(!Files.isSymbolicLink(it)) { "saved run directories must not contain symlinks: $it" }
-        }.filter { Files.isDirectory(it, NOFOLLOW_LINKS) } }
+        return Files.list(path).use { entries ->
+            entries.sorted().toList().onEach {
+                require(!Files.isSymbolicLink(it)) { "saved run directories must not contain symlinks: $it" }
+            }.filter { Files.isDirectory(it, NOFOLLOW_LINKS) }
+        }
     }
 
     private fun readObject(path: Path): JsonObject {
@@ -202,21 +215,14 @@ class SavedRunReader {
         }
     }
 
-    private fun JsonObject.string(name: String): String {
-        val value = this[name] as? JsonPrimitive
-        require(value != null && value.isString && value.content.isNotBlank()) { "'$name' must be a non-blank string" }
-        return value.content
-    }
-    private fun JsonObject.int(name: String): Int {
-        val value = this[name] as? JsonPrimitive
-        require(value != null && !value.isString && value.intOrNull != null) { "'$name' must be an integer" }
-        return value.int
-    }
+    private fun JsonObject.string(name: String): String = nonBlankString(name)
+
+    private fun JsonObject.int(name: String): Int = this[name].intValue()
+        ?: throw IllegalArgumentException("'$name' must be an integer")
+
     private fun JsonObject.obj(name: String): JsonObject = this[name] as? JsonObject
         ?: throw IllegalArgumentException("'$name' must be an object")
+
     private fun JsonObject.array(name: String): JsonArray = this[name] as? JsonArray
         ?: throw IllegalArgumentException("'$name' must be an array")
-    private fun JsonObject.fields(vararg names: String) {
-        require(keys == names.toSet()) { "outcome fields disagree with its kind" }
-    }
 }

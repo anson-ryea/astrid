@@ -2,9 +2,9 @@ package domain
 
 /** The outcome of evaluating a task submission. */
 sealed interface EvaluationResult {
-    data object Accepted: EvaluationResult
+    data object Accepted : EvaluationResult
 
-    data class Rejected(val reason: String): EvaluationResult {
+    data class Rejected(val reason: String) : EvaluationResult {
         init {
             require(reason.isNotBlank()) {
                 "rejection reason must not be blank"
@@ -13,7 +13,7 @@ sealed interface EvaluationResult {
     }
 
     /** Valid output whose semantic agreement has not been established automatically. */
-    data class NeedsReview(val reason: String): EvaluationResult {
+    data class NeedsReview(val reason: String) : EvaluationResult {
         init {
             require(reason.isNotBlank()) {
                 "review reason must not be blank"

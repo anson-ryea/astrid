@@ -2,26 +2,43 @@ package analysis
 
 import ai.koog.prompt.message.ResponseMetaInfo
 import domain.EvaluationResult
-import java.nio.file.Path
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.*
 import org.junit.jupiter.api.io.TempDir
-import run.*
+import run.SampleOutcome
+import run.SampleResourceRecorder
+import run.SampleResources
+import run.TokenPricing
+import run.serialization.SampleResourcesJson
+import java.nio.file.Path
 import kotlin.test.*
 
 class ResourceAccountingTest {
-    @TempDir lateinit var root: Path
+    @TempDir
+    lateinit var root: Path
     private fun observed(): SampleResources {
         val resources = SampleResourceRecorder(TokenPricing(1.0, 2.0), 42)
         resources.request(100)
-        resources.response(ResponseMetaInfo.Empty.copy(inputTokensCount = 10, outputTokensCount = 5, totalTokensCount = 15))
+        resources.response(
+            ResponseMetaInfo.Empty.copy(
+                inputTokensCount = 10,
+                outputTokensCount = 5,
+                totalTokensCount = 15
+            )
+        )
         return resources.snapshot()
     }
 
     @Test
     fun aggregatesResourcesInEveryGroupAndAllExportFormats() = runBlocking {
         val resources = observed()
-        val records = (1..2).map { sample(taskA, it, SampleOutcome.Evaluated(EvaluationResult.Accepted)).copy(resources = resources) }
+        val records = (1..2).map {
+            sample(
+                taskA,
+                it,
+                SampleOutcome.Evaluated(EvaluationResult.Accepted)
+            ).copy(resources = resources)
+        }
         val path = savedRun(root.resolve("full"), records, samplesPerTask = 2)
         val analysis = RunAnalyser().analyse(SavedRunReader().read(path))
         val totals = analysis.summaries.first().resources.values
@@ -35,15 +52,22 @@ class ResourceAccountingTest {
         assertContains(AnalysisRenderer.csv(listOf(analysis)), "resources_total_tokens")
         assertContains(AnalysisRenderer.text(listOf(analysis)), "total=30")
         val json = Json.parseToJsonElement(AnalysisRenderer.json(listOf(analysis))).jsonObject
-        assertEquals(totals, json.getValue("runs").jsonArray.single().jsonObject.getValue("summaries").jsonArray.first().jsonObject.getValue("resources"))
+        assertEquals(
+            totals,
+            json.getValue("runs").jsonArray.single().jsonObject.getValue("summaries").jsonArray.first().jsonObject.getValue(
+                "resources"
+            )
+        )
     }
 
     @Test
     fun missingSamplesOrUsageYieldUnknownTotalsAndPreserveKnownSubtotals() = runBlocking {
         val known = observed()
         val failed = SampleResourceRecorder(TokenPricing(1.0, 2.0), null).also { it.request(100) }.snapshot()
-        val records = listOf(sample(taskA, 1, SampleOutcome.Evaluated(EvaluationResult.Accepted)).copy(resources = known),
-            sample(taskA, 2, SampleOutcome.ProviderFailure("failed")).copy(resources = failed))
+        val records = listOf(
+            sample(taskA, 1, SampleOutcome.Evaluated(EvaluationResult.Accepted)).copy(resources = known),
+            sample(taskA, 2, SampleOutcome.ProviderFailure("failed")).copy(resources = failed)
+        )
         val path = savedRun(root.resolve("partial-usage"), records, samplesPerTask = 2)
         val run = SavedRunReader().read(path)
         val totals = RunAnalyser().analyse(run).summaries.first().resources.values
@@ -60,8 +84,8 @@ class ResourceAccountingTest {
 
     @Test
     fun rejectsInconsistentResourceCoverage() {
-        val resources = observed().toJson()
+        val resources = SampleResourcesJson.encode(observed())
         val invalid = JsonObject(resources + ("responses_with_total_usage" to JsonPrimitive(0)))
-        assertFailsWith<IllegalArgumentException> { SampleResources.fromJson(invalid) }
+        assertFailsWith<IllegalArgumentException> { SampleResourcesJson.decode(invalid) }
     }
 }

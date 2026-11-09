@@ -11,7 +11,7 @@ import kotlin.time.toJavaDuration
 class LeanLakeProcess(
     private val projectRoot: Path,
     private val inheritLeanPath: Boolean = true,
-): LeanProcess {
+) : LeanProcess {
     init {
         require(projectRoot.isAbsolute && projectRoot == projectRoot.normalize()) {
             "project root must be absolute and normalised"

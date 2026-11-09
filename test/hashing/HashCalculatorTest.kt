@@ -1,4 +1,4 @@
-package dataset
+package hashing
 
 import domain.Sha256Digest
 import java.nio.file.Files

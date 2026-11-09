@@ -15,7 +15,9 @@ class TaskSelector(
     }
 
     fun select(tasks: Collection<BenchmarkTask>): List<BenchmarkTask> {
-        val eligible = tasks.filter { it.manifest.status == TaskStatus.FROZEN && it.manifest.evaluation.kind in evaluationKinds }
+        val eligible =
+            tasks.filter { it.manifest.status == TaskStatus.FROZEN && it.manifest.evaluation.kind in evaluationKinds }
+
         fun <T> requireKnown(requested: Set<T>, available: Set<T>, label: String) {
             require(requested.all { it in available }) { "no frozen supported tasks for $label: ${(requested - available).joinToString()}" }
         }

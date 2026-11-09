@@ -10,26 +10,17 @@ import ai.koog.prompt.message.MessagePart
 import ai.koog.prompt.message.ResponseMetaInfo
 import com.sun.net.httpserver.HttpServer
 import domain.EvaluationResult
-import java.net.InetSocketAddress
-import java.nio.file.Path
-import java.util.Base64
-import java.util.concurrent.CopyOnWriteArrayList
-import kotlin.test.Test
-import kotlin.test.assertContains
-import kotlin.test.assertEquals
-import kotlin.test.assertFalse
-import kotlin.test.assertIs
-import kotlin.test.assertTrue
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.runBlocking
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.*
 import org.junit.jupiter.api.io.TempDir
+import java.net.InetSocketAddress
+import java.nio.file.Path
+import java.util.*
+import java.util.concurrent.CopyOnWriteArrayList
+import kotlin.test.*
 
 class LangfuseTracingTest {
     @TempDir
@@ -43,7 +34,8 @@ class LangfuseTracingTest {
             val records = coroutineScope {
                 (1..2).map { index ->
                     async {
-                        createRunEngine(temporaryDirectory.resolve("sample-$index"),
+                        createRunEngine(
+                            temporaryDirectory.resolve("sample-$index"),
                             ScriptedPromptExecutor(listOf("bad", "good")), langfuse = tracing,
                             assessSubmission = { _, submission ->
                                 if (submission == "bad") EvaluationResult.Rejected("repair diagnostic")
@@ -72,8 +64,10 @@ class LangfuseTracingTest {
             assertContains(payloads, "Repair: repair diagnostic")
             assertContains(payloads, "gen_ai.completion.0.content")
             assertFalse(payloads.contains("sk-test"))
-            assertTrue(receiver.authorisations.all { it == "Basic " +
-                Base64.getEncoder().encodeToString("pk-test:sk-test".toByteArray()) })
+            assertTrue(receiver.authorisations.all {
+                it == "Basic " +
+                        Base64.getEncoder().encodeToString("pk-test:sk-test".toByteArray())
+            })
             assertTrue(receiver.ingestionVersions.all { it == "4" })
         }
     }
@@ -82,8 +76,10 @@ class LangfuseTracingTest {
     fun canMaskPromptAndResponseContent() = runBlocking {
         withReceiver { receiver ->
             val task = createRunTask(temporaryDirectory)
-            val record = createRunEngine(temporaryDirectory, ScriptedPromptExecutor(listOf("sensitive-response")),
-                langfuse = receiver.tracing(captureContent = false)).run(task, 1)
+            val record = createRunEngine(
+                temporaryDirectory, ScriptedPromptExecutor(listOf("sensitive-response")),
+                langfuse = receiver.tracing(captureContent = false)
+            ).run(task, 1)
             assertEquals(SampleOutcome.Evaluated(EvaluationResult.Accepted), record.outcome)
             val payloads = receiver.payloads.joinToString()
             assertTrue(receiver.spans().isNotEmpty())
@@ -97,8 +93,10 @@ class LangfuseTracingTest {
     fun exportFailureDoesNotChangeTheEvaluationOrLoseTheLocalTrace() = runBlocking {
         withReceiver(status = 503) { receiver ->
             val task = createRunTask(temporaryDirectory)
-            val engine = createRunEngine(temporaryDirectory, ScriptedPromptExecutor(listOf("one", "two")),
-                langfuse = receiver.tracing())
+            val engine = createRunEngine(
+                temporaryDirectory, ScriptedPromptExecutor(listOf("one", "two")),
+                langfuse = receiver.tracing()
+            )
             for (index in 1..2) {
                 val record = engine.run(task, index)
                 assertEquals(SampleOutcome.Evaluated(EvaluationResult.Accepted), record.outcome)
@@ -117,15 +115,20 @@ class LangfuseTracingTest {
             val executor = ScriptedPromptExecutor(listOf("call", "finished")) {
                 if (it == "call") Message.Assistant(
                     listOf(MessagePart.Tool.Call("lookup-1", "lookup", JsonObject(emptyMap()))),
-                    ResponseMetaInfo.Empty, finishReason = "tool_calls")
+                    ResponseMetaInfo.Empty, finishReason = "tool_calls"
+                )
                 else Message.Assistant(it, ResponseMetaInfo.Empty)
             }
             val specification = runTestSpecification().let {
-                it.copy(model = it.model.copy(capabilities = listOf(LLMCapability.Completion, LLMCapability.Tools)),
-                    maxToolCallsPerAttempt = 1)
+                it.copy(
+                    model = it.model.copy(capabilities = listOf(LLMCapability.Completion, LLMCapability.Tools)),
+                    maxToolCallsPerAttempt = 1
+                )
             }
-            val record = createRunEngine(temporaryDirectory, executor, specification,
-                langfuse = receiver.tracing(), toolRegistry = registry).run(task, 1)
+            val record = createRunEngine(
+                temporaryDirectory, executor, specification,
+                langfuse = receiver.tracing(), toolRegistry = registry
+            ).run(task, 1)
             assertEquals(SampleOutcome.Evaluated(EvaluationResult.Accepted), record.outcome)
             assertTrue(record.trajectory.any { it.kind == "ToolCallCompletedEvent" })
             val payloads = receiver.payloads.joinToString()
@@ -140,8 +143,10 @@ class LangfuseTracingTest {
         withReceiver { receiver ->
             val task = createRunTask(temporaryDirectory)
             val executor = ScriptedPromptExecutor(listOf("unused")) { error("synthetic-model-failure") }
-            val record = createRunEngine(temporaryDirectory, executor,
-                langfuse = receiver.tracing()).run(task, 1)
+            val record = createRunEngine(
+                temporaryDirectory, executor,
+                langfuse = receiver.tracing()
+            ).run(task, 1)
             assertIs<SampleOutcome.ExecutionFailure>(record.outcome)
             assertTrue(record.trajectory.any { it.kind == "AgentExecutionFailedEvent" })
             assertTrue(receiver.spans().any { span ->
@@ -159,7 +164,11 @@ class LangfuseTracingTest {
 
     private suspend fun withReceiver(status: Int = 200, block: suspend (Receiver) -> Unit) {
         val receiver = Receiver(status)
-        try { block(receiver) } finally { receiver.server.stop(0) }
+        try {
+            block(receiver)
+        } finally {
+            receiver.server.stop(0)
+        }
     }
 
     private class Receiver(status: Int) {
@@ -180,11 +189,13 @@ class LangfuseTracingTest {
         }
 
         fun tracing(captureContent: Boolean = true): LangfuseTracing {
-            val config = LangfuseConfig.fromEnvironment(mapOf(
-                "LANGFUSE_HOST" to "http://127.0.0.1:${server.address.port}",
-                "LANGFUSE_PUBLIC_KEY" to "pk-test", "LANGFUSE_SECRET_KEY" to "sk-test",
-                "LANGFUSE_CAPTURE_CONTENT" to captureContent.toString(),
-            )::get)!!
+            val config = LangfuseConfig.fromEnvironment(
+                mapOf(
+                    "LANGFUSE_HOST" to "http://127.0.0.1:${server.address.port}",
+                    "LANGFUSE_PUBLIC_KEY" to "pk-test", "LANGFUSE_SECRET_KEY" to "sk-test",
+                    "LANGFUSE_CAPTURE_CONTENT" to captureContent.toString(),
+                )::get
+            )!!
             return LangfuseTracing(config, "test-run", "plum", "lean")
         }
 
@@ -201,6 +212,6 @@ class LangfuseTracingTest {
         span.getValue("attributes").jsonArray.associate {
             val attribute = it.jsonObject
             attribute.getValue("key").jsonPrimitive.content to
-                attribute.getValue("value").jsonObject.values.single().toString().trim('"')
+                    attribute.getValue("value").jsonObject.values.single().toString().trim('"')
         }
 }
