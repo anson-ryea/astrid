@@ -1,6 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Astrid private Lean semantic contract V1",
+  "$id": "urn:astrid:lean-semantic-contract:v1",
+  "title": "ASTRID Lean semantic contract V1",
+  "description": "Private, runner-only semantic contracts supplied for Lean evaluation.",
   "type": "object",
   "additionalProperties": false,
   "required": [

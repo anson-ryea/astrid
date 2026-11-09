@@ -1,6 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Astrid private Lean package validation profile V1",
+  "$id": "urn:astrid:lean-validation-profile:v1",
+  "title": "ASTRID Lean validation profile V1",
+  "description": "Private reference submissions and curation checks supplied for offline Lean package validation.",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema_version", "task_id", "excluded_declarations", "reference_submission"],
