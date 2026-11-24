@@ -3,12 +3,10 @@
 
 # Kotlin/Amper
 /build/
+*.jar
 
 # Benchmark run outputs
 /runs/
-
-# Lean
-/testResources/lean/.lake/
 
 # macOS metadata
 .DS_Store
