@@ -91,7 +91,7 @@ class LeanValidationProfileTest {
                     backend.lean.evaluation.LeanSubmissionPolicy().checkProofBody(
                         reference.referenceSubmission.trim(),
                         it.manifest.submission, it.manifest.evaluation
-                    ), it.manifest.taskId.value
+                    ) { error("unexpected parser request for fixture") }, it.manifest.taskId.value
                 )
             }
         }

@@ -103,7 +103,7 @@ class WorkspaceTaskRunEngineTest {
         assertTrue(executor.prompts[2].messages.size > executor.prompts[0].messages.size)
         executor.offeredTools.forEach { tools ->
             assertEquals(
-                setOf("__list_directory__", "__read_file__", "search_files", "__write_file__", "edit_file"),
+                setOf("list_directory", "read_file", "search_files", "write_file", "edit_file"),
                 tools.map { it.name }.toSet()
             )
         }
@@ -143,7 +143,7 @@ class WorkspaceTaskRunEngineTest {
             ScriptedPromptExecutor(listOf("host read", "hidden read", "readonly write", "edit", "finish")) { reply ->
                 when (reply) {
                     "host read", "hidden read" -> Message.Assistant(
-                        MessagePart.Tool.Call(reply, "__read_file__", buildJsonObject {
+                        MessagePart.Tool.Call(reply, "read_file", buildJsonObject {
                             put(
                                 "path",
                                 JsonPrimitive(if (reply == "host read") "/etc/passwd" else "/workspace/.lake/packages/mathlib/Mathlib.lean")
@@ -152,7 +152,7 @@ class WorkspaceTaskRunEngineTest {
                     )
 
                     "readonly write" -> Message.Assistant(
-                        MessagePart.Tool.Call(reply, "__write_file__", buildJsonObject {
+                        MessagePart.Tool.Call(reply, "write_file", buildJsonObject {
                             put("path", JsonPrimitive("/workspace/lean-toolchain"))
                             put("content", JsonPrimitive("bad"))
                         }), ResponseMetaInfo.Empty, finishReason = "tool_calls"
@@ -191,7 +191,7 @@ class WorkspaceTaskRunEngineTest {
         assertTrue(roots.none(Files::exists))
     }
 
-    private fun readCall(id: String) = MessagePart.Tool.Call(id, "__read_file__", buildJsonObject {
+    private fun readCall(id: String) = MessagePart.Tool.Call(id, "read_file", buildJsonObject {
         put("path", JsonPrimitive("/workspace/Solution.lean"))
     })
 

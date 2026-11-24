@@ -4,6 +4,8 @@ import dataset.TaskPackageVerifier
 import domain.*
 import evaluation.TaskEvaluator
 import kotlin.io.path.readText
+import kotlin.time.Duration
+import kotlin.time.TimeSource
 
 class LeanProofEvaluator(
     private val leanProcess: LeanProcess,
@@ -44,13 +46,18 @@ class LeanProofEvaluator(
             )
         }
 
-        submissionPolicy.checkProofBody(
-            submission,
-            task.manifest.submission,
-            task.manifest.evaluation,
-        )?.let { return it }
+        val start = TimeSource.Monotonic.markNow()
+        fun runLean(source: String): LeanProcessResult {
+            val remaining = task.manifest.evaluation.timeout - start.elapsedNow()
+            return if (remaining <= Duration.ZERO) LeanProcessResult.TimedOut else leanProcess.run(source, remaining)
+        }
 
         val source = try {
+            val rejection =
+                submissionPolicy.checkProofBody(submission, task.manifest.submission, task.manifest.evaluation) {
+                    runLean(sourceBuilder.tokenProbe(material.first, material.second, submission))
+                }
+            if (rejection != null) return rejection
             sourceBuilder.build(material.first, material.second, submission)
         } catch (failure: IllegalArgumentException) {
             return EvaluationResult.InfrastructureFailure(
@@ -58,12 +65,7 @@ class LeanProofEvaluator(
             )
         }
 
-        return when (
-            val run = leanProcess.run(
-                source,
-                task.manifest.evaluation.timeout,
-            )
-        ) {
+        return when (val run = runLean(source)) {
             is LeanProcessResult.Completed -> {
                 if (run.exitCode != 0) {
                     EvaluationResult.Rejected(

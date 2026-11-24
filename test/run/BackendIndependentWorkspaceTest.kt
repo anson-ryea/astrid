@@ -46,7 +46,7 @@ class BackendIndependentWorkspaceTest {
         }
         val executor = ScriptedPromptExecutor(listOf("write", "finish")) { reply ->
             if (reply == "write") Message.Assistant(
-                MessagePart.Tool.Call("write-1", "__write_file__", buildJsonObject {
+                MessagePart.Tool.Call("write-1", "write_file", buildJsonObject {
                     put("path", JsonPrimitive("/workspace/Answer.txt"))
                     put("content", JsonPrimitive("file answer"))
                 }),

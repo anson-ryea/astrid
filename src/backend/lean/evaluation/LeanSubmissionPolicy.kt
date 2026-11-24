@@ -5,6 +5,7 @@ import domain.EvaluationResult
 import domain.EvaluationSpecification
 import domain.SubmissionKind
 import domain.SubmissionSpecification
+import kotlinx.serialization.json.Json
 
 /** Checks the textual restrictions on Lean proof submissions. */
 class LeanSubmissionPolicy {
@@ -38,8 +39,32 @@ class LeanSubmissionPolicy {
         submission: String,
         submissionSpecification: SubmissionSpecification,
         evaluationSpecification: EvaluationSpecification,
+        parseTokens: () -> LeanProcessResult,
     ): EvaluationResult? {
         validateSpecification(submissionSpecification, evaluationSpecification)?.let { return it }
+        val rejection = checkTokens(submission, submissionSpecification, evaluationSpecification) ?: return null
+        if (!mayContainComment(submission)) return rejection
+
+        // Ask the pinned parser which whitespace belongs to comments. Never elaborate the submitted
+        // term during this pass, and always compile its original source after checking the policy.
+        return when (val parsed = parseTokens()) {
+            LeanProcessResult.TimedOut -> EvaluationResult.InfrastructureFailure("Lean proof parsing timed out")
+            is LeanProcessResult.InfrastructureFailure -> EvaluationResult.InfrastructureFailure(parsed.reason)
+            is LeanProcessResult.Completed -> {
+                if (parsed.exitCode != 0) return EvaluationResult.Rejected("Lean rejected the proof syntax:\n${parsed.output}")
+                val report = parsed.output.lineSequence().singleOrNull { it.startsWith(TOKEN_PREFIX) }
+                    ?: return EvaluationResult.InfrastructureFailure("missing Lean proof token report")
+                val code = Json.decodeFromString<String>(report.removePrefix(TOKEN_PREFIX))
+                checkTokens(code, submissionSpecification, evaluationSpecification)
+            }
+        }
+    }
+
+    private fun checkTokens(
+        submission: String,
+        submissionSpecification: SubmissionSpecification,
+        evaluationSpecification: EvaluationSpecification,
+    ): EvaluationResult? {
         if (!proofStart.matchesAt(submission, 0)) {
             return EvaluationResult.Rejected(
                 "submission must be one Lean `by` proof body",
@@ -77,15 +102,19 @@ class LeanSubmissionPolicy {
         return null
     }
 
-    private companion object {
-        val proofStart = Regex("""\s*by\b""")
+    companion object {
+        internal const val TOKEN_PREFIX = "ASTRID_PROOF_CODE "
 
-        val topLevelDeclaration = Regex(
+        internal fun mayContainComment(source: String) = "--" in source || "/-" in source
+
+        private val proofStart = Regex("""\s*by\b""")
+
+        private val topLevelDeclaration = Regex(
             """\b(?:axiom|theorem|lemma|def|abbrev|instance)\b""",
             RegexOption.IGNORE_CASE,
         )
 
-        val mechanismPatterns = mapOf(
+        private val mechanismPatterns = mapOf(
             "sorry" to Regex("""\bsorry\b""", RegexOption.IGNORE_CASE),
             "admit" to Regex("""\badmit\b""", RegexOption.IGNORE_CASE),
             "import" to Regex("""\bimport\b""", RegexOption.IGNORE_CASE),

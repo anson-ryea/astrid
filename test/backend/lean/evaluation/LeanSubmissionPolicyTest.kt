@@ -19,7 +19,7 @@ class LeanSubmissionPolicyTest {
     @Test
     fun allowsProofWithLocalHelper() {
         assertNull(
-            policy.checkProofBody(
+            checkProofBody(
                 "by\n  have h : True := by trivial\n  exact h",
                 submission,
                 evaluation(),
@@ -29,7 +29,7 @@ class LeanSubmissionPolicyTest {
 
     @Test
     fun rejectsSorry() {
-        val result = policy.checkProofBody(
+        val result = checkProofBody(
             "by sorry",
             submission,
             evaluation(),
@@ -40,7 +40,7 @@ class LeanSubmissionPolicyTest {
 
     @Test
     fun rejectsForbiddenIdentifier() {
-        val result = policy.checkProofBody(
+        val result = checkProofBody(
             "by\n  exact translation_preserves_typing",
             submission,
             evaluation(),
@@ -60,20 +60,20 @@ class LeanSubmissionPolicyTest {
             )
         )
         assertNull(
-            policy.checkProofBody(
+            checkProofBody(
                 "by\n  have h : FreshFunctionInversion := by assumption\n  exact h",
                 submission, specification
             )
         )
-        assertNull(policy.checkProofBody("by exact freshFunctionInversionResult", submission, specification))
+        assertNull(checkProofBody("by exact freshFunctionInversionResult", submission, specification))
         for (name in listOf("freshFunctionInversion", "Paper2.Contains.freshFunctionInversion")) {
-            assertIs<EvaluationResult.Rejected>(policy.checkProofBody("by exact $name", submission, specification))
+            assertIs<EvaluationResult.Rejected>(checkProofBody("by exact $name", submission, specification))
         }
     }
 
     @Test
     fun rejectsProofMarker() {
-        val result = policy.checkProofBody(
+        val result = checkProofBody(
             "by\n  __BENCHMARK_PROOF__",
             submission,
             evaluation(),
@@ -87,7 +87,7 @@ class LeanSubmissionPolicyTest {
 
     @Test
     fun reportsUnknownMechanismAsInfrastructureFailure() {
-        val result = policy.checkProofBody(
+        val result = checkProofBody(
             "by trivial",
             submission,
             evaluation(setOf("unknown_escape")),
@@ -95,6 +95,9 @@ class LeanSubmissionPolicyTest {
 
         assertIs<EvaluationResult.InfrastructureFailure>(result)
     }
+
+    private fun checkProofBody(code: String, spec: SubmissionSpecification, eval: EvaluationSpecification) =
+        policy.checkProofBody(code, spec, eval) { error("unexpected parser request") }
 
     private fun evaluation(
         forbiddenMechanisms: Set<String> = setOf("sorry"),

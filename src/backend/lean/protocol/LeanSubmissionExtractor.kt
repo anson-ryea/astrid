@@ -4,7 +4,8 @@ package backend.lean.protocol
 class LeanSubmissionExtractor {
     fun extractLeanProof(response: String): String {
         val proof = extractLeanCode(response, "Lean proof")
-        require(proofStart.containsMatchIn(proof)) {
+        // A leading comment can precede the by term. The proof evaluator checks its parsed form.
+        require(proofStart.containsMatchIn(proof) || proof.startsWith("--") || proof.startsWith("/-")) {
             "response must be one Lean `by` proof body"
         }
         return proof
@@ -43,6 +44,6 @@ class LeanSubmissionExtractor {
             RegexOption.DOT_MATCHES_ALL,
         )
         private val nestedFence = Regex("""(?m)^[ \t]*```""")
-        private val proofStart = Regex("""\Aby(?:\s|$)""")
+        private val proofStart = Regex("""\Aby(?=\s|--|/-|$)""")
     }
 }

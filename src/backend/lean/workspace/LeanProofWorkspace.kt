@@ -1,5 +1,6 @@
 package backend.lean.workspace
 
+import backend.lean.evaluation.LeanSubmissionPolicy
 import backend.lean.protocol.LeanProofProtocol
 import domain.BenchmarkTask
 import domain.EvaluationReport
@@ -39,7 +40,10 @@ class LeanProofWorkspace internal constructor(
             )
         }
         val submission = candidate.substring(prefix.length, candidate.length - suffix.length).trim()
-        if (marker in submission) {
+        if (marker in submission && (marker != LeanProofProtocol.MARKER || !LeanSubmissionPolicy.mayContainComment(
+                submission
+            ))
+        ) {
             return submission to evaluator.reportUnassessed(
                 task,
                 EvaluationResult.Rejected("replace the submission marker in Solution.lean")

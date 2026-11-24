@@ -12,12 +12,11 @@
 
 ## Available tools
 
-**Copy tool names exactly from the tool definitions.** Leading and trailing
-underscores are part of the name. Use the provided argument schema for each tool.
+Use the tool names and argument schemas shown in the tool definitions.
 
-- `__list_directory__`: discover visible files and directories.
-- `__read_file__`: read a text file or a selected line range.
-- `__write_file__`: create or replace the complete contents of a writable file.
+- `list_directory`: discover visible files and directories.
+- `read_file`: read a text file or a selected line range.
+- `write_file`: create or replace the complete contents of a writable file.
 - `search_files`: search visible files for a literal string.
 - `edit_file`: replace matching text in a writable file; supply `path`, `original`
   and `replacement`.
@@ -31,7 +30,7 @@ underscores are part of the name. Use the provided argument schema for each tool
    in the conversation.
 3. Batch independent reads when their paths are known. Inspect results before
    making calls that depend on those results.
-4. Prefer `edit_file` for a targeted change. Use `__write_file__` when creating a
+4. Prefer `edit_file` for a targeted change. Use `write_file` when creating a
    permitted file or when you have its complete intended contents.
 5. Check tool results for success. Read back the final submission file and verify
    that the required content is present and the fixed content is preserved.
