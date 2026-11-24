@@ -4,6 +4,8 @@ import hashing.HashCalculator
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Path
+import java.nio.file.StandardCopyOption.ATOMIC_MOVE
+import java.nio.file.StandardCopyOption.REPLACE_EXISTING
 
 /** Bounded file storage and snapshots, independent of the backend and agent framework. */
 class TaskWorkspace internal constructor(
@@ -40,7 +42,7 @@ class TaskWorkspace internal constructor(
     }
 
     @Synchronized
-    fun write(path: String, content: String) {
+    fun write(path: String, content: String, canCommit: () -> Boolean = { true }) {
         require(
             path !in inputPaths &&
                     (path in specification.initialFiles || specification.scratchPath.matches(path))
@@ -53,8 +55,15 @@ class TaskWorkspace internal constructor(
         }
         require(path in writableFiles || writableFiles.size < specification.maxWritableFiles) { "too many writable files" }
         Files.createDirectories(destination.parent)
-        Files.writeString(destination, content)
-        writableFiles += path
+        val staged = Files.createTempFile(destination.parent, ".write-", ".tmp")
+        try {
+            Files.writeString(staged, content)
+            check(canCommit()) { "sample deadline expired before the write could be committed" }
+            Files.move(staged, destination, ATOMIC_MOVE, REPLACE_EXISTING)
+            writableFiles += path
+        } finally {
+            Files.deleteIfExists(staged)
+        }
     }
 
     fun changedInput(): String? = inputs.firstOrNull { read(it.path) != it.content }?.path

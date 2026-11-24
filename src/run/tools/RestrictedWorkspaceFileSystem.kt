@@ -10,7 +10,10 @@ import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 
 /** Koog sees virtual absolute paths, never the host filesystem or its temporary paths. */
-internal class RestrictedWorkspaceFileSystem(private val workspace: TaskWorkspace) :
+internal class RestrictedWorkspaceFileSystem(
+    private val workspace: TaskWorkspace,
+    private val canCommit: () -> Boolean = { true },
+) :
     FileSystemProvider.ReadWrite<String> {
     override fun fromAbsolutePathString(path: String): String {
         val relative = relative(path)
@@ -84,7 +87,7 @@ internal class RestrictedWorkspaceFileSystem(private val workspace: TaskWorkspac
     }
 
     override suspend fun writeBytes(path: String, data: ByteArray) {
-        workspace.write(relative(path), data.decodeToString(throwOnInvalidSequence = true))
+        workspace.write(relative(path), data.decodeToString(throwOnInvalidSequence = true), canCommit)
     }
 
     // The registered built-in tools write through writeBytes. Disable unused mutation APIs.

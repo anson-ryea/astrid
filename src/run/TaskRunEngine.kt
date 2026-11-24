@@ -20,6 +20,7 @@ import evaluation.TaskEvaluator
 import evaluation.TaskEvaluatorRegistry
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runInterruptible
+import kotlinx.coroutines.withTimeoutOrNull
 import prompt.PromptRenderer
 import protocol.TaskProtocol
 import protocol.TaskProtocolRegistry
@@ -79,7 +80,7 @@ class TaskRunEngine(
             else TaskRunRecord(
                 task.manifest.taskId, sampleIndex, "", "", emptyList(),
                 SampleOutcome.BudgetExhausted(SampleBudget.SAMPLE_TIME, "sample deadline exhausted during preparation"),
-                workspace = session?.workspace?.record(), resources = resources.snapshot()
+                workspace = session?.workspace?.record(), resources = resources.snapshot(), deadlineReached = true,
             )
             // Save before removing the workspace; persistence and cleanup are outside the experimental deadline.
             saveRecord(record)
@@ -120,8 +121,10 @@ class TaskRunEngine(
         val evaluator = evaluators.findFor(task)
         val taskPrompt = protocol.renderPrompt(task, session?.submissionInstructions)
         val systemText = systemPromptRenderer.render(emptyMap())
-        val workspaceRegistry = workspace?.let { WorkspaceTools(it).toolRegistry } ?: ToolRegistry.EMPTY
+        val workspaceRegistry =
+            workspace?.let { WorkspaceTools(it) { deadline.hasTime }.toolRegistry } ?: ToolRegistry.EMPTY
         val workspaceToolNames = workspaceRegistry.tools.map { it.name }.toSet()
+        val canSubmit = WorkspaceTools.SUBMIT_SOLUTION in workspaceToolNames
         require(toolRegistry.tools.none { it.name in workspaceToolNames }) {
             "other tools must not duplicate workspace tool names"
         }
@@ -130,6 +133,34 @@ class TaskRunEngine(
         val turns = mutableListOf<TaskRunRecord.Turn>()
         val trajectory = KoogTrajectoryRecorder()
         var outcome: SampleOutcome? = null
+        var message = taskPrompt
+
+        suspend fun assessAttempt(response: String, atDeadline: Boolean = false): Pair<String?, EvaluationReport> {
+            phaseChanged(SamplePhase.Evaluating)
+            val started = TimeSource.Monotonic.markNow()
+            try {
+                suspend fun check() = runInterruptible(Dispatchers.IO) {
+                    session?.assessDetailed() ?: assess(task, protocol, evaluator, response)
+                }
+                if (!atDeadline) return check()
+                return withTimeoutOrNull(task.manifest.evaluation.timeout) { check() }
+                    ?: (null to EvaluationReport(EvaluationResult.InfrastructureFailure("deadline assessment timed out")))
+            } finally {
+                resources.evaluationMs += started.elapsedNow().inWholeMilliseconds
+            }
+        }
+
+        fun recordTurn(response: String, submission: String?, report: EvaluationReport?) {
+            turns += TaskRunRecord.Turn(
+                repairTurn = turns.size,
+                userMessage = message,
+                response = response,
+                submission = submission,
+                result = report?.result,
+                workspaceFiles = workspace?.snapshot() ?: emptyList(),
+                evaluationEvidence = report?.evidence,
+            )
+        }
 
         // Capture explicit limits before Koog can wrap their exceptions.
         fun exhaust(limit: SampleBudget, reason: String): Nothing {
@@ -155,8 +186,7 @@ class TaskRunEngine(
 
         // Koog 1.3.0 tracing is a graph feature. The sample loop runs in one node.
         val strategy = strategy<String, String>("benchmarkSample") {
-            val runSample by node<String, String> { initialPrompt ->
-                var message = initialPrompt
+            val runSample by node<String, String> {
                 var usedAgentIterations = 0L
 
                 // Bound model requests inside the node independently of graph traversal.
@@ -170,8 +200,8 @@ class TaskRunEngine(
                     }
                 }
 
-                var repairTurn = 0
                 while (true) {
+                    outcome = null
                     consumeIteration()
                     phaseChanged(SamplePhase.Generating)
                     var reply = llm.writeSession {
@@ -213,13 +243,13 @@ class TaskRunEngine(
                                 resources.toolMs += started.elapsedNow().inWholeMilliseconds
                             }
                         }
-                        consumeIteration()
-                        reply = llm.writeSession {
-                            appendPrompt {
-                                user { results.forEach { toolResult(it.toMessagePart()) } }
-                            }
-                            requestLLM()
+                        val toolResults = results.map { it.toMessagePart() }
+                        llm.writeSession {
+                            appendPrompt { user { toolResults.forEach { toolResult(it) } } }
                         }
+                        if (canSubmit && toolResults.any { it.tool == WorkspaceTools.SUBMIT_SOLUTION && !it.isError }) break
+                        consumeIteration()
+                        reply = llm.writeSession { requestLLM() }
                         checkResponseBudget()
                         toolCalls =
                             reply.parts.filterIsInstance<MessagePart.Tool.Call>()
@@ -237,32 +267,15 @@ class TaskRunEngine(
                             )
                             null to null
                         } else {
-                            phaseChanged(SamplePhase.Evaluating)
-                            val started = TimeSource.Monotonic.markNow()
-                            try {
-                                runInterruptible(Dispatchers.IO) {
-                                    session?.assessDetailed() ?: assess(task, protocol, evaluator, response)
-                                }
-                            } finally {
-                                resources.evaluationMs += started.elapsedNow().inWholeMilliseconds
-                            }
+                            assessAttempt(response)
                         }
-                    val result = report?.result
-
-                    turns += TaskRunRecord.Turn(
-                        repairTurn = repairTurn,
-                        userMessage = message,
-                        response = response,
-                        submission = submission,
-                        result = result,
-                        workspaceFiles = workspace?.snapshot() ?: emptyList(),
-                        evaluationEvidence = report?.evidence,
-                    )
+                    recordTurn(response, submission, report)
 
                     if (report == null) break
-                    outcome = SampleOutcome.Evaluated(report.result)
+                    val result = report.result
+                    outcome = SampleOutcome.Evaluated(result)
                     if (report.publicDiagnostic == null) break
-                    if (!specification.repairPolicy.shouldRepair(repairTurn, report.result)) {
+                    if (!specification.repairPolicy.shouldRepair(turns.lastIndex, result)) {
                         if (result is EvaluationResult.Rejected) outcome = SampleOutcome.RepairLimitReached(result)
                         break
                     }
@@ -271,7 +284,6 @@ class TaskRunEngine(
                     message = repairPromptRenderer.render(
                         mapOf("DIAGNOSTIC" to report.publicDiagnostic),
                     )
-                    repairTurn++
                 }
 
                 turns.last().response
@@ -280,7 +292,7 @@ class TaskRunEngine(
             edge(runSample forwardTo nodeFinish)
         }
 
-        val finalOutcome = try {
+        val stoppedOutcome = try {
             val config = AIAgentConfig(
                 prompt = prompt(
                     "benchmark-${task.manifest.taskId.value}-$sampleIndex",
@@ -327,6 +339,17 @@ class TaskRunEngine(
             }
         }
 
+        val deadlineReached =
+            stoppedOutcome is SampleOutcome.BudgetExhausted && stoppedOutcome.limit == SampleBudget.SAMPLE_TIME
+        val finalOutcome = if (deadlineReached && session != null) {
+            // The timed coroutine has stopped. No tool writes or model calls can occur while grading.
+            outcome ?: run {
+                val (submission, report) = assessAttempt(response = "", atDeadline = true)
+                recordTurn("", submission, report)
+                SampleOutcome.Evaluated(report.result)
+            }
+        } else stoppedOutcome
+
         return TaskRunRecord(
             taskId = task.manifest.taskId,
             sampleIndex = sampleIndex,
@@ -337,6 +360,7 @@ class TaskRunEngine(
             trajectory = trajectory.events,
             workspace = workspace?.record(),
             resources = resources.snapshot(),
+            deadlineReached = deadlineReached,
         )
     }
 

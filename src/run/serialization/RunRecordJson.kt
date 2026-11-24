@@ -108,6 +108,7 @@ internal object RunRecordJson {
             put("task_prompt", JsonPrimitive(record.taskPrompt))
             put("turns", JsonArray(record.turns.map(::turnJson)))
             put("outcome", SampleOutcomeJson.encode(record.outcome))
+            if (record.deadlineReached) put("deadline_reached", true)
             put("resources", record.resources?.let(SampleResourcesJson::encode) ?: JsonNull)
             put("trajectory_file", JsonPrimitive("trajectory.jsonl"))
             record.workspace?.let { workspace ->

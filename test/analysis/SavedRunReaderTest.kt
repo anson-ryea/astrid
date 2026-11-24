@@ -18,6 +18,15 @@ class SavedRunReaderTest {
     private val accepted = SampleOutcome.Evaluated(EvaluationResult.Accepted)
 
     @Test
+    fun countsAnAcceptedDeadlineSubmissionAsBothAcceptedAndTimeLimited() = runBlocking {
+        val record = sample(taskA, 1, accepted).copy(deadlineReached = true)
+        val path = savedRun(root.resolve("deadline"), listOf(record))
+        val saved = SavedRunReader().read(path).samples.single()
+        assertEquals(SampleCategory.ACCEPTED, saved.category)
+        assertEquals(SampleBudget.SAMPLE_TIME, saved.budget)
+    }
+
+    @Test
     fun readsAllHistoricalSchemasWithoutGuessingLegacyFailureReasons() = runBlocking {
         for (version in 1..5) {
             val path = savedRun(

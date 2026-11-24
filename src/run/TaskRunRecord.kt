@@ -18,6 +18,7 @@ data class TaskRunRecord(
     val trajectory: List<AgentTrajectoryEvent> = emptyList(),
     val workspace: WorkspaceRecord? = null,
     val resources: SampleResources? = null,
+    val deadlineReached: Boolean = false,
 ) {
     init {
         require(sampleIndex > 0) { "sample index must be positive" }

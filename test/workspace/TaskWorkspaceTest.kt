@@ -22,6 +22,8 @@ class TaskWorkspaceTest {
             workspace.write("Answer.thy", "submitted theory")
             workspace.write("scratch/notes.txt", "working notes")
             assertEquals("submitted theory", workspace.read("Answer.thy"))
+            assertFailsWith<IllegalStateException> { workspace.write("Answer.thy", "late theory") { false } }
+            assertEquals("submitted theory", workspace.read("Answer.thy"))
             assertEquals(listOf("Answer.thy", "scratch/notes.txt"), workspace.snapshot().map { it.path })
             assertFailsWith<IllegalArgumentException> { workspace.write(input.path, "changed") }
             assertEquals("fixed input", workspace.read(input.path))

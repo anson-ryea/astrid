@@ -17,6 +17,7 @@ import backend.lean.protocol.LeanProtocols
 import backend.lean.workspace.LeanTaskWorkspaceFactory
 import domain.EvaluationResult
 import evaluation.TaskEvaluatorRegistry
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.*
 import prompt.PromptRenderer
@@ -25,6 +26,8 @@ import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.test.*
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 
 class WorkspaceTaskRunEngineTest {
     @org.junit.jupiter.api.io.TempDir
@@ -41,6 +44,7 @@ class WorkspaceTaskRunEngineTest {
     private fun engine(
         executor: ScriptedPromptExecutor, budget: Int? = 12, iterations: Int? = 80,
         otherBudget: Int? = 0, otherTools: ToolRegistry = ToolRegistry.EMPTY,
+        timeout: Duration? = null,
         check: (String) -> LeanProcessResult = {
             LeanProcessResult.Completed(
                 0,
@@ -58,7 +62,8 @@ class WorkspaceTaskRunEngineTest {
                     LLMProvider.OpenRouter, "test-model",
                     capabilities = listOf(LLMCapability.Completion, LLMCapability.Tools)
                 ), 2, RepairPolicy(1), otherBudget, iterations,
-                maxWorkspaceToolCallsPerAttempt = budget
+                maxWorkspaceToolCallsPerAttempt = budget,
+                limits = SampleLimits(timeout = timeout),
             ),
             PromptRenderer(prompts.resolve("agent-system.md")), PromptRenderer(prompts.resolve("repair.md")),
             toolRegistry = otherTools,
@@ -103,7 +108,7 @@ class WorkspaceTaskRunEngineTest {
         assertTrue(executor.prompts[2].messages.size > executor.prompts[0].messages.size)
         executor.offeredTools.forEach { tools ->
             assertEquals(
-                setOf("list_directory", "read_file", "search_files", "write_file", "edit_file"),
+                setOf("list_directory", "read_file", "search_files", "write_file", "edit_file", "submit_solution"),
                 tools.map { it.name }.toSet()
             )
         }
@@ -115,6 +120,75 @@ class WorkspaceTaskRunEngineTest {
             toolEvents.first().details["toolArgs"]!!.jsonObject["path"]!!.jsonPrimitive.content
         )
         assertContains(toolEvents.first().details["result"].toString(), "trivial")
+    }
+
+    @Test
+    fun explicitSubmissionChecksImmediatelyAndUsesTheNormalRepairTurn() = runBlocking {
+        val executor = ScriptedPromptExecutor(listOf("trivial", "simp")) { tactic ->
+            val previous = if (tactic == "trivial") "__BENCHMARK_PROOF__" else "by\n  trivial"
+            val calls = edit(previous, "by\n  $tactic").parts +
+                    MessagePart.Tool.Call("submit-$tactic", "submit_solution", JsonObject(emptyMap()))
+            Message.Assistant(calls, ResponseMetaInfo.Empty, finishReason = "tool_calls")
+        }
+        val record = engine(executor, budget = 2, iterations = 2) { source ->
+            if (source.contains("  trivial")) LeanProcessResult.Completed(1, "repair this proof")
+            else LeanProcessResult.Completed(0, "'Benchmark.target' does not depend on any axioms")
+        }.run(task, 1)
+
+        assertEquals(SampleOutcome.Evaluated(EvaluationResult.Accepted), record.outcome)
+        assertEquals(listOf("by\n  trivial", "by\n  simp"), record.turns.map { it.submission })
+        assertContains(record.turns.last().userMessage, "repair this proof")
+        assertEquals(2, executor.prompts.size)
+        assertTrue(executor.prompts.last().messages.flatMap { it.parts }.any {
+            it is MessagePart.Tool.Result && it.tool == "submit_solution" && !it.isError
+        })
+    }
+
+    @Test
+    fun gradesTheSavedProofAfterCancellingTheOutstandingModelRequestAtTheDeadline() = runBlocking {
+        var modelStopped = false
+        val executor = ScriptedPromptExecutor(listOf("edit", "wait")) { reply ->
+            if (reply == "edit") edit("__BENCHMARK_PROOF__", "by\n  trivial")
+            else try {
+                awaitCancellation()
+            } finally {
+                modelStopped = true
+            }
+        }
+        val record = engine(executor, timeout = 2.seconds) { source ->
+            assertTrue(modelStopped)
+            assertContains(source, "by\n  trivial")
+            LeanProcessResult.Completed(0, "'Benchmark.target' does not depend on any axioms")
+        }.run(task, 1)
+
+        assertTrue(record.deadlineReached)
+        assertEquals(SampleOutcome.Evaluated(EvaluationResult.Accepted), record.outcome)
+        assertEquals(EvaluationResult.Accepted, record.turns.single().result)
+        assertEquals("by\n  trivial", record.turns.single().submission)
+        assertEquals(2, executor.prompts.size)
+    }
+
+    @Test
+    fun deadlineGradesTheLatestRepairWithoutStartingAnotherModelRequest() = runBlocking {
+        val executor = ScriptedPromptExecutor(listOf("edit", "finish", "repair", "wait")) { reply ->
+            when (reply) {
+                "edit" -> edit("__BENCHMARK_PROOF__", "by\n  trivial")
+                "finish" -> Message.Assistant("Finished", ResponseMetaInfo.Empty)
+                "repair" -> edit("by\n  trivial", "by\n  simp")
+                else -> awaitCancellation()
+            }
+        }
+        val record = engine(executor, timeout = 2.seconds) { source ->
+            val diagnostic = if (source.contains("  trivial")) "initial rejection" else "rejected latest repair"
+            LeanProcessResult.Completed(1, diagnostic)
+        }.run(task, 1)
+
+        assertTrue(record.deadlineReached)
+        assertEquals(listOf("by\n  trivial", "by\n  simp"), record.turns.map { it.submission })
+        val result = assertIs<SampleOutcome.Evaluated>(record.outcome).result
+        assertContains(assertIs<EvaluationResult.Rejected>(result).reason, "rejected latest repair")
+        assertEquals(result, record.turns.last().result)
+        assertEquals(4, executor.prompts.size)
     }
 
     @Test
@@ -247,7 +321,7 @@ class WorkspaceTaskRunEngineTest {
         assertEquals(2, record.resources.modelRequests)
         assertTrue(record.resources.elapsedMs >= record.resources.modelMs)
         assertEquals(4, record.trajectory.count { it.kind == "ToolCallCompletedEvent" })
-        assertTrue(executor.offeredTools.all { it.size == 6 })
+        assertTrue(executor.offeredTools.all { it.size == 7 })
     }
 
     @Test

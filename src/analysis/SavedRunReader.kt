@@ -183,7 +183,8 @@ class SavedRunReader {
         }
         require(turns.dropLast(1).none { it == null }) { "only the final turn may be unassessed" }
         return SavedSample(
-            taskId, sampleIndex, version, category, budget,
+            taskId, sampleIndex, version, category,
+            if (value["deadline_reached"] == JsonPrimitive(true)) SampleBudget.SAMPLE_TIME else budget,
             turns.firstOrNull() == SampleCategory.ACCEPTED,
             turns.firstOrNull()
                 ?.let { it !in setOf(SampleCategory.EVALUATOR_FAILURE, SampleCategory.LEGACY_INFRASTRUCTURE_FAILURE) }
