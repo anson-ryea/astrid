@@ -18,11 +18,15 @@ data class TaskRunRecord(
     val trajectory: List<AgentTrajectoryEvent> = emptyList(),
     val workspace: WorkspaceRecord? = null,
     val resources: SampleResources? = null,
-    val deadlineReached: Boolean = false,
+    /** Why execution stopped when the final outcome comes from grading the saved file. */
+    val stopReason: SampleOutcome.Interruption? = null,
 ) {
     init {
         require(sampleIndex > 0) { "sample index must be positive" }
     }
+
+    val deadlineReached: Boolean
+        get() = ((stopReason ?: outcome) as? SampleOutcome.BudgetExhausted)?.limit == SampleBudget.SAMPLE_TIME
 
     data class Turn(
         val repairTurn: Int,

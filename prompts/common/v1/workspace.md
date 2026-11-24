@@ -46,8 +46,8 @@ Use the tool names and argument schemas shown in the tool definitions.
 - Follow the task's submission instructions. Scratch files are working notes and
   are not included in the checked submission.
 - Once your submission file is ready, call `submit_solution` or finish your
-  response to trigger the check. At the time limit, the runner checks the last
-  saved submission file automatically.
+  response to trigger the check. If execution stops early or reaches a limit,
+  the runner checks the last saved submission file automatically.
 - The runner supplies evaluator diagnostics for a repair. The workspace and
   conversation persist across repairs; update the existing submission using that
   feedback.

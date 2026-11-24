@@ -1,6 +1,7 @@
 package analysis
 
 import run.SampleBudget
+import run.SampleOutcome
 import run.SampleResources
 
 data class SavedSample(
@@ -14,4 +15,5 @@ data class SavedSample(
     val recordedRepairTurns: Int,
     val resources: SampleResources? = null,
     val configurationIndex: Int = 0,
+    val stopReason: SampleOutcome.Interruption? = null,
 )

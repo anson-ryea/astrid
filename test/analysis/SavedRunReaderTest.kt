@@ -19,11 +19,39 @@ class SavedRunReaderTest {
 
     @Test
     fun countsAnAcceptedDeadlineSubmissionAsBothAcceptedAndTimeLimited() = runBlocking {
-        val record = sample(taskA, 1, accepted).copy(deadlineReached = true)
+        val stop = SampleOutcome.BudgetExhausted(SampleBudget.SAMPLE_TIME, "deadline reached")
+        val record = sample(taskA, 1, accepted).copy(stopReason = stop)
         val path = savedRun(root.resolve("deadline"), listOf(record))
         val saved = SavedRunReader().read(path).samples.single()
         assertEquals(SampleCategory.ACCEPTED, saved.category)
         assertEquals(SampleBudget.SAMPLE_TIME, saved.budget)
+        assertEquals(stop, saved.stopReason)
+        editJson(samplePath(path)) { JsonObject(it - "stop_reason") }
+        val legacy = SavedRunReader().read(path).samples.single()
+        assertEquals(SampleCategory.ACCEPTED, legacy.category)
+        assertEquals(SampleBudget.SAMPLE_TIME, legacy.budget)
+    }
+
+    @Test
+    fun providerStopDoesNotReplaceAnAcceptedOutcomeInAnalysis() = runBlocking {
+        val stop = SampleOutcome.ProviderFailure("request timed out")
+        val path = savedRun(root.resolve("provider"), listOf(sample(taskA, 1, accepted).copy(stopReason = stop)))
+        val run = SavedRunReader().read(path)
+        assertEquals(stop, run.samples.single().stopReason)
+        val overall = RunAnalyser().analyse(run).summaries.first()
+        assertEquals(1, overall.finalAccepted)
+        assertEquals(1, overall.providerStops)
+        assertEquals(0, overall.counts.getValue(SampleCategory.PROVIDER_FAILURE))
+    }
+
+    @Test
+    fun readsInfrastructureFailureBeforeTheFirstAttempt() = runBlocking {
+        val outcome = SampleOutcome.Evaluated(EvaluationResult.InfrastructureFailure("workspace preparation failed"))
+        val record = sample(taskA, 1, outcome).copy(turns = emptyList())
+        val path = savedRun(root.resolve("preparation"), listOf(record))
+        val saved = SavedRunReader().read(path).samples.single()
+        assertEquals(SampleCategory.EVALUATOR_FAILURE, saved.category)
+        assertFalse(saved.firstAttemptAssessed)
     }
 
     @Test

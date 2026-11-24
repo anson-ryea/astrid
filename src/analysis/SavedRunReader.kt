@@ -172,7 +172,14 @@ class SavedRunReader {
 
             else -> verdict(value["final_result"], legacy = true)
         }
-        if (version >= 4 && category in setOf(
+        val stopReason = value["stop_reason"]?.let {
+            require(it is JsonObject) { "stop_reason must be an object" }
+            SampleOutcomeJson.decode(it) as? SampleOutcome.Interruption
+                ?: throw IllegalArgumentException("stop_reason must describe an interruption")
+        }
+        val failedBeforeAttempt = version >= 6 && turns.isEmpty() && value["workspace"] == null &&
+                category == SampleCategory.EVALUATOR_FAILURE
+        if (version >= 4 && !failedBeforeAttempt && category in setOf(
                 SampleCategory.ACCEPTED,
                 SampleCategory.REJECTED,
                 SampleCategory.NEEDS_REVIEW,
@@ -184,7 +191,8 @@ class SavedRunReader {
         require(turns.dropLast(1).none { it == null }) { "only the final turn may be unassessed" }
         return SavedSample(
             taskId, sampleIndex, version, category,
-            if (value["deadline_reached"] == JsonPrimitive(true)) SampleBudget.SAMPLE_TIME else budget,
+            (stopReason as? SampleOutcome.BudgetExhausted)?.limit ?: budget
+            ?: SampleBudget.SAMPLE_TIME.takeIf { value["deadline_reached"] == JsonPrimitive(true) },
             turns.firstOrNull() == SampleCategory.ACCEPTED,
             turns.firstOrNull()
                 ?.let { it !in setOf(SampleCategory.EVALUATOR_FAILURE, SampleCategory.LEGACY_INFRASTRUCTURE_FAILURE) }
@@ -200,6 +208,7 @@ class SavedRunReader {
             configurationIndex = value["configuration_index"]?.let {
                 requireNotNull(it.intValue()) { "'configuration_index' must be an integer" }
             } ?: 0,
+            stopReason = stopReason,
         )
     }
 

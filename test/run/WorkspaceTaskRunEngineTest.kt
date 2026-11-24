@@ -4,6 +4,7 @@ import ai.koog.agents.core.tools.ToolRegistry
 import ai.koog.agents.core.tools.annotations.LLMDescription
 import ai.koog.agents.core.tools.annotations.Tool
 import ai.koog.agents.core.tools.reflect.ToolSet
+import ai.koog.prompt.executor.clients.LLMClientException
 import ai.koog.prompt.llm.LLMCapability
 import ai.koog.prompt.llm.LLMProvider
 import ai.koog.prompt.llm.LLModel
@@ -192,6 +193,39 @@ class WorkspaceTaskRunEngineTest {
     }
 
     @Test
+    fun providerFailureGradesSavedFileAndPreservesASeparateStopReason() = runBlocking {
+        val checks = listOf(
+            LeanProcessResult.Completed(0, "'Benchmark.target' does not depend on any axioms"),
+            LeanProcessResult.Completed(1, "invalid proof"),
+            LeanProcessResult.TimedOut,
+        )
+        for (check in checks) {
+            val executor = ScriptedPromptExecutor(listOf("edit", "provider timeout")) { reply ->
+                if (reply == "edit") edit("__BENCHMARK_PROOF__", "by\n  trivial")
+                else throw LLMClientException("test-provider", "request timed out")
+            }
+            val record = engine(executor) { check }.run(task, 1)
+
+            val stop = assertIs<SampleOutcome.ProviderFailure>(record.stopReason)
+            assertContains(stop.reason, "request timed out")
+            val result = assertIs<SampleOutcome.Evaluated>(record.outcome).result
+            when (check) {
+                LeanProcessResult.TimedOut -> assertIs<EvaluationResult.InfrastructureFailure>(result)
+                is LeanProcessResult.Completed -> if (check.exitCode == 0) assertEquals(
+                    EvaluationResult.Accepted,
+                    result
+                )
+                else assertIs<EvaluationResult.Rejected>(result)
+
+                else -> error("unexpected verifier result")
+            }
+            assertEquals(result, record.turns.single().result)
+            assertEquals("by\n  trivial", record.turns.single().submission)
+            assertEquals(2, executor.prompts.size)
+        }
+    }
+
+    @Test
     fun samplesStartWithFreshFilesAndFreshConversation() = runBlocking {
         val executor = ScriptedPromptExecutor(listOf("edit", "finish", "finish", "finish")) { reply ->
             if (reply == "edit") edit("__BENCHMARK_PROOF__", "by\n  trivial")
@@ -251,10 +285,11 @@ class WorkspaceTaskRunEngineTest {
             edit(if (it == "edit") "__BENCHMARK_PROOF__" else "by\n  trivial", "by\n  trivial")
         }
         val record = engine(executor, budget = 1).run(task, 1)
-        val budget = assertIs<SampleOutcome.BudgetExhausted>(record.outcome)
+        val budget = assertIs<SampleOutcome.BudgetExhausted>(record.stopReason)
         assertEquals(SampleBudget.WORKSPACE_TOOL_CALLS, budget.limit)
         assertEquals("workspace tool call limit exceeded", budget.reason)
-        assertTrue(record.turns.isEmpty())
+        assertEquals(SampleOutcome.Evaluated(EvaluationResult.Accepted), record.outcome)
+        assertEquals(EvaluationResult.Accepted, record.turns.single().result)
         assertContains(requireNotNull(record.workspace).finalFiles.single().content, "  trivial")
         assertEquals(1, record.trajectory.count { it.kind == "ToolCallCompletedEvent" })
         assertTrue(record.trajectory.any {
@@ -335,7 +370,7 @@ class WorkspaceTaskRunEngineTest {
             Message.Assistant(calls, ResponseMetaInfo.Empty, finishReason = "tool_calls")
         }
         val record = engine(executor, budget = null, otherBudget = 1, otherTools = otherTools).run(task, 1)
-        val budget = assertIs<SampleOutcome.BudgetExhausted>(record.outcome)
+        val budget = assertIs<SampleOutcome.BudgetExhausted>(record.stopReason)
         assertEquals(SampleBudget.TOOL_CALLS, budget.limit)
         assertEquals("tool call limit exceeded", budget.reason)
         assertEquals(1, lookup.calls)
@@ -354,7 +389,7 @@ class WorkspaceTaskRunEngineTest {
             Message.Assistant(calls, ResponseMetaInfo.Empty, finishReason = "tool_calls")
         }
         val record = engine(executor, budget = 1, otherBudget = null, otherTools = otherTools).run(task, 1)
-        val budget = assertIs<SampleOutcome.BudgetExhausted>(record.outcome)
+        val budget = assertIs<SampleOutcome.BudgetExhausted>(record.stopReason)
         assertEquals(SampleBudget.WORKSPACE_TOOL_CALLS, budget.limit)
         assertEquals("workspace tool call limit exceeded", budget.reason)
         assertEquals(2, lookup.calls)
@@ -362,17 +397,18 @@ class WorkspaceTaskRunEngineTest {
     }
 
     @Test
-    fun truncatedReplyDoesNotRunToolsOrCompileAndStillCapturesFiles() = runBlocking {
-        val executor = ScriptedPromptExecutor(listOf("truncated")) {
-            edit("__BENCHMARK_PROOF__", "by\n  trivial").copy(finishReason = "length")
+    fun truncatedReplyGradesOnlyThePreviouslySavedFile() = runBlocking {
+        val executor = ScriptedPromptExecutor(listOf("edit", "truncated")) { reply ->
+            if (reply == "edit") edit("__BENCHMARK_PROOF__", "by\n  trivial")
+            else edit("by\n  trivial", "by\n  simp").copy(finishReason = "length")
         }
-        val record = engine(executor, check = { error("must not compile") }).run(task, 1)
-        val budget = assertIs<SampleOutcome.BudgetExhausted>(record.outcome)
+        val record = engine(executor).run(task, 1)
+        val budget = assertIs<SampleOutcome.BudgetExhausted>(record.stopReason)
         assertEquals(SampleBudget.OUTPUT_TOKENS, budget.limit)
-        assertEquals(null, record.turns.single().result)
-        assertEquals(1, record.turns.size)
-        assertFalse(record.trajectory.any { it.kind == "ToolCallStartingEvent" })
-        assertContains(requireNotNull(record.workspace).finalFiles.single().content, "__BENCHMARK_PROOF__")
+        assertEquals(SampleOutcome.Evaluated(EvaluationResult.Accepted), record.outcome)
+        assertEquals("by\n  trivial", record.turns.single().submission)
+        assertEquals(1, record.trajectory.count { it.kind == "ToolCallStartingEvent" })
+        assertContains(requireNotNull(record.workspace).finalFiles.single().content, "by\n  trivial")
         assertTrue(roots.none(Files::exists))
     }
 
@@ -390,13 +426,15 @@ class WorkspaceTaskRunEngineTest {
             if (reply == "edit") edit("__BENCHMARK_PROOF__", "by\n  trivial")
             else Message.Assistant("Finished", ResponseMetaInfo.Empty)
         }
+        var checks = 0
         val record = engine(
             executor, iterations = 2,
-            check = { LeanProcessResult.Completed(1, "rejected proof") }).run(task, 1)
-        val budget = assertIs<SampleOutcome.BudgetExhausted>(record.outcome)
+            check = { checks++; LeanProcessResult.Completed(1, "rejected proof") }).run(task, 1)
+        val budget = assertIs<SampleOutcome.BudgetExhausted>(record.stopReason)
         assertEquals(SampleBudget.AGENT_ITERATIONS, budget.limit)
         assertEquals(2, executor.prompts.size)
         assertEquals(1, record.turns.size)
+        assertEquals(1, checks)
         assertIs<EvaluationResult.Rejected>(record.turns.single().result)
         assertTrue(record.trajectory.any {
             it.kind == "AgentExecutionFailedEvent" &&

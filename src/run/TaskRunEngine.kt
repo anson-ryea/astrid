@@ -27,6 +27,8 @@ import protocol.TaskProtocolRegistry
 import run.tools.WorkspaceTools
 import workspace.TaskWorkspaceFactory
 import workspace.TaskWorkspaceSession
+import workspace.WorkspaceFile
+import workspace.WorkspaceRecord
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.TimeSource
 
@@ -75,12 +77,22 @@ class TaskRunEngine(
                 return true
             }
 
-            val prepared = deadline.runOrNull(::prepare) == true
-            val record = if (prepared) runPrepared(task, sampleIndex, session, onEvent, resources, deadline)
+            val preparationOutcome = try {
+                if (deadline.runOrNull(::prepare) == true) null
+                else SampleOutcome.BudgetExhausted(
+                    SampleBudget.SAMPLE_TIME,
+                    "sample deadline exhausted during preparation"
+                )
+            } catch (failure: CancellationException) {
+                throw failure
+            } catch (failure: Exception) {
+                SampleOutcome.Evaluated(EvaluationResult.InfrastructureFailure("workspace preparation failed: ${failure.message ?: failure.javaClass.simpleName}"))
+            }
+            val record =
+                if (preparationOutcome == null) runPrepared(task, sampleIndex, session, onEvent, resources, deadline)
             else TaskRunRecord(
-                task.manifest.taskId, sampleIndex, "", "", emptyList(),
-                SampleOutcome.BudgetExhausted(SampleBudget.SAMPLE_TIME, "sample deadline exhausted during preparation"),
-                workspace = session?.workspace?.record(), resources = resources.snapshot(), deadlineReached = true,
+                    task.manifest.taskId, sampleIndex, "", "", emptyList(), preparationOutcome,
+                    workspace = session?.workspace?.record(), resources = resources.snapshot(),
             )
             // Save before removing the workspace; persistence and cleanup are outside the experimental deadline.
             saveRecord(record)
@@ -134,30 +146,40 @@ class TaskRunEngine(
         val trajectory = KoogTrajectoryRecorder()
         var outcome: SampleOutcome? = null
         var message = taskPrompt
+        var stoppedResponse = ""
 
-        suspend fun assessAttempt(response: String, atDeadline: Boolean = false): Pair<String?, EvaluationReport> {
+        suspend fun assessAttempt(response: String, finalCheck: Boolean = false): Pair<String?, EvaluationReport> {
             phaseChanged(SamplePhase.Evaluating)
             val started = TimeSource.Monotonic.markNow()
             try {
                 suspend fun check() = runInterruptible(Dispatchers.IO) {
                     session?.assessDetailed() ?: assess(task, protocol, evaluator, response)
                 }
-                if (!atDeadline) return check()
+                if (!finalCheck) return check()
                 return withTimeoutOrNull(task.manifest.evaluation.timeout) { check() }
-                    ?: (null to EvaluationReport(EvaluationResult.InfrastructureFailure("deadline assessment timed out")))
+                    ?: (null to EvaluationReport(EvaluationResult.InfrastructureFailure("final assessment timed out")))
+            } catch (failure: CancellationException) {
+                throw failure
+            } catch (failure: Exception) {
+                return null to EvaluationReport(EvaluationResult.InfrastructureFailure("assessment failed: ${failure.message ?: failure.javaClass.simpleName}"))
             } finally {
                 resources.evaluationMs += started.elapsedNow().inWholeMilliseconds
             }
         }
 
-        fun recordTurn(response: String, submission: String?, report: EvaluationReport?) {
+        fun recordTurn(
+            response: String,
+            submission: String?,
+            report: EvaluationReport?,
+            files: List<WorkspaceFile> = workspace?.snapshot() ?: emptyList(),
+        ) {
             turns += TaskRunRecord.Turn(
                 repairTurn = turns.size,
                 userMessage = message,
                 response = response,
                 submission = submission,
                 result = report?.result,
-                workspaceFiles = workspace?.snapshot() ?: emptyList(),
+                workspaceFiles = files,
                 evaluationEvidence = report?.evidence,
             )
         }
@@ -259,19 +281,18 @@ class TaskRunEngine(
                         .filterIsInstance<MessagePart.Text>()
                         .joinToString("\n") { it.text }
 
-                    val (submission, report) =
-                        if (reply.finishReason == "length") {
-                            outcome = SampleOutcome.BudgetExhausted(
-                                SampleBudget.OUTPUT_TOKENS,
-                                "model response was truncated at the output-token limit"
-                            )
-                            null to null
-                        } else {
-                            assessAttempt(response)
-                        }
+                    if (reply.finishReason == "length") {
+                        stoppedResponse = response
+                        outcome = SampleOutcome.BudgetExhausted(
+                            SampleBudget.OUTPUT_TOKENS,
+                            "model response was truncated at the output-token limit"
+                        )
+                        if (workspace == null) recordTurn(response, null, null)
+                        break
+                    }
+                    val (submission, report) = assessAttempt(response)
                     recordTurn(response, submission, report)
 
-                    if (report == null) break
                     val result = report.result
                     outcome = SampleOutcome.Evaluated(result)
                     if (report.publicDiagnostic == null) break
@@ -286,7 +307,7 @@ class TaskRunEngine(
                     )
                 }
 
-                turns.last().response
+                turns.lastOrNull()?.response ?: stoppedResponse
             }
             edge(nodeStart forwardTo runSample)
             edge(runSample forwardTo nodeFinish)
@@ -339,16 +360,38 @@ class TaskRunEngine(
             }
         }
 
-        val deadlineReached =
-            stoppedOutcome is SampleOutcome.BudgetExhausted && stoppedOutcome.limit == SampleBudget.SAMPLE_TIME
-        val finalOutcome = if (deadlineReached && session != null) {
-            // The timed coroutine has stopped. No tool writes or model calls can occur while grading.
-            outcome ?: run {
-                val (submission, report) = assessAttempt(response = "", atDeadline = true)
-                recordTurn("", submission, report)
-                SampleOutcome.Evaluated(report.result)
+        val stop = stoppedOutcome as? SampleOutcome.Interruption
+        var finalWorkspace: WorkspaceRecord? = null
+        val snapshotFailure = try {
+            finalWorkspace = workspace?.record()
+            null
+        } catch (failure: Exception) {
+            EvaluationResult.InfrastructureFailure("could not save workspace: ${failure.message ?: failure.javaClass.simpleName}")
+        }
+        val finalOutcome = when {
+            snapshotFailure != null -> {
+                recordTurn(stoppedResponse, null, EvaluationReport(snapshotFailure), emptyList())
+                SampleOutcome.Evaluated(snapshotFailure)
             }
-        } else stoppedOutcome
+
+            stop != null && finalWorkspace != null -> {
+                // The agent has exited and cannot change the files during the final check.
+                val previous = turns.lastOrNull()
+                val files = finalWorkspace.finalFiles
+                val previousResult = previous?.result
+                if (previousResult != null && previousResult !is EvaluationResult.InfrastructureFailure &&
+                    previous.workspaceFiles == files && inputsIntact(checkNotNull(session))
+                ) {
+                    SampleOutcome.Evaluated(previousResult)
+                } else {
+                    val (submission, report) = assessAttempt(stoppedResponse, finalCheck = true)
+                    recordTurn(stoppedResponse, submission, report, files)
+                    SampleOutcome.Evaluated(report.result)
+                }
+            }
+
+            else -> stoppedOutcome
+        }
 
         return TaskRunRecord(
             taskId = task.manifest.taskId,
@@ -358,10 +401,16 @@ class TaskRunEngine(
             turns = turns.toList(),
             outcome = finalOutcome,
             trajectory = trajectory.events,
-            workspace = workspace?.record(),
+            workspace = finalWorkspace,
             resources = resources.snapshot(),
-            deadlineReached = deadlineReached,
+            stopReason = stop?.takeUnless { it == finalOutcome },
         )
+    }
+
+    private fun inputsIntact(session: TaskWorkspaceSession): Boolean = try {
+        session.workspace.changedInput() == null
+    } catch (_: Exception) {
+        false // A fresh assessment will report the underlying failure.
     }
 
     private fun assess(

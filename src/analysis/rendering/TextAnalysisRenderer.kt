@@ -44,6 +44,7 @@ internal object TextAnalysisRenderer {
             )
             appendLine("Outcomes: " + total.counts.entries.joinToString(", ") { "${it.key.value}=${it.value}" })
             appendLine("Budget limits: " + total.budgets.entries.joinToString(", ") { "${it.key}=${it.value}" })
+            appendLine("Execution stops: provider=${total.providerStops}, runner=${total.executionStops}")
             for ((k, eligibleTasks, firstAttempt, final) in total.passAtK) appendLine(
                 "pass@$k: first=${formatPercentage(firstAttempt)}, final=${
                     formatPercentage(

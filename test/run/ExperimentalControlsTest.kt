@@ -192,6 +192,25 @@ class ExperimentalControlsTest {
     }
 
     @Test
+    fun recordsWorkspacePreparationErrorsAsInfrastructureFailuresWithoutCallingTheModel() = runBlocking {
+        val specification = runTestSpecification().let {
+            it.copy(
+                model = it.model.copy(capabilities = it.model.capabilities.orEmpty() + ai.koog.prompt.llm.LLMCapability.Tools),
+                maxWorkspaceToolCallsPerAttempt = 1,
+            )
+        }
+        val factory = TaskWorkspaceFactory { TaskWorkspacePlan { error("Lean dependencies missing") } }
+        val executor = ScriptedPromptExecutor(emptyList())
+        val record =
+            createRunEngine(root, executor, specification, workspaceFactory = factory).run(createRunTask(root), 1)
+
+        val result = assertIs<SampleOutcome.Evaluated>(record.outcome).result
+        assertContains(assertIs<EvaluationResult.InfrastructureFailure>(result).reason, "Lean dependencies missing")
+        assertTrue(record.turns.isEmpty())
+        assertTrue(executor.prompts.isEmpty())
+    }
+
+    @Test
     fun deadlineCancelsGenerationAndInterruptsBlockingAssessmentAndPreparation() = runBlocking {
         val task = createRunTask(root)
         val limits = SampleLimits(timeout = 500.milliseconds)

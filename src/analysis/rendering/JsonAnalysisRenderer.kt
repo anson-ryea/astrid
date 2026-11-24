@@ -60,6 +60,8 @@ internal object JsonAnalysisRenderer {
         put(
             "budget_limits",
             buildJsonObject { s.budgets.forEach { (limit, count) -> put(limit, JsonPrimitive(count)) } })
+        put("provider_stops", JsonPrimitive(s.providerStops))
+        put("execution_stops", JsonPrimitive(s.executionStops))
         put("first_attempt_accepted", JsonPrimitive(s.firstAttemptAccepted))
         put("first_attempt_assessed", JsonPrimitive(s.firstAttemptAssessed))
         put("first_attempt_acceptance_rate", JsonPrimitive(s.firstAttemptRate))

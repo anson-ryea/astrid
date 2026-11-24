@@ -18,6 +18,8 @@ data class AnalysisSummary(
     val paperMacroFinalRate: Double?,
     val passAtK: List<PassAtK>,
     val resources: ResourceSummary,
+    val providerStops: Int,
+    val executionStops: Int,
 ) {
     val missingSamples: Long get() = expectedSamples - savedSamples
     val finalAccepted: Int get() = counts.getValue(SampleCategory.ACCEPTED)

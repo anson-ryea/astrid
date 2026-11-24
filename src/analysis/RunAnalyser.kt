@@ -1,6 +1,7 @@
 package analysis
 
 import run.SampleBudget
+import run.SampleOutcome
 
 class RunAnalyser {
     fun analyse(run: SavedRun, ks: List<Int> = listOf(1, 5, 10)): RunAnalysis {
@@ -51,6 +52,12 @@ class RunAnalyser {
                     PassAtK(k, eligible.size, estimate(true), estimate(false))
                 },
                 resources = ResourceSummary.from(samples),
+                providerStops = samples.count {
+                    it.stopReason is SampleOutcome.ProviderFailure || it.category == SampleCategory.PROVIDER_FAILURE
+                },
+                executionStops = samples.count {
+                    it.stopReason is SampleOutcome.ExecutionFailure || it.category == SampleCategory.EXECUTION_FAILURE
+                },
             )
         }
 

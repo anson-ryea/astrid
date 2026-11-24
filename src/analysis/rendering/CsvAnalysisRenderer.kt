@@ -51,7 +51,9 @@ internal object CsvAnalysisRenderer {
                 listOf(
                     "denominator_policy",
                     "pass_at_k_policy",
-                    "notes"
+                    "notes",
+                    "provider_stops",
+                    "execution_stops",
                 )
             )
         }
@@ -95,7 +97,9 @@ internal object CsvAnalysisRenderer {
                             listOf(
                                 AnalysisRenderer.DENOMINATOR_POLICY,
                                 AnalysisRenderer.PASS_POLICY,
-                                analysis.run.warnings.joinToString(" ")
+                                analysis.run.warnings.joinToString(" "),
+                                s.providerStops,
+                                s.executionStops,
                             )
                         )
                     }

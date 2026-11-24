@@ -80,6 +80,10 @@ internal object AnalysisReport {
             value(limit.replace('_', ' '), count(amount.toLong(), yellow))
         }
 
+        section("execution stops")
+        value("provider", count(total.providerStops.toLong(), yellow))
+        value("runner", count(total.executionStops.toLong(), yellow))
+
         section("pass@k")
         total.passAtK.forEach { estimate ->
             value(
