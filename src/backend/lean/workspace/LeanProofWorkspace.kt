@@ -19,7 +19,7 @@ class LeanProofWorkspace internal constructor(
     private val marker: String = LeanProofProtocol.MARKER,
 ) : TaskWorkspaceSession {
     private val prefix = template.substringBefore(marker).replace("\r\n", "\n").trimEnd()
-    private val suffix = template.substringAfter(marker).replace("\r\n", "\n").trimStart()
+    private val suffix = template.substringAfter(marker).replace("\r\n", "\n").trimStart().trimEnd('\n')
 
     override fun validateEvaluation() = evaluator.validateTask(task)
 
@@ -32,7 +32,8 @@ class LeanProofWorkspace internal constructor(
                 EvaluationResult.InfrastructureFailure("workspace input changed: $path")
             )
         }
-        val candidate = workspace.read("Solution.lean").replace("\r\n", "\n")
+        // A whole-file write may change the final newline without changing the fixed Lean text.
+        val candidate = workspace.read("Solution.lean").replace("\r\n", "\n").trimEnd('\n')
         if (!candidate.startsWith(prefix) || !candidate.endsWith(suffix) || candidate.length < prefix.length + suffix.length) {
             return null to evaluator.reportUnassessed(
                 task,
