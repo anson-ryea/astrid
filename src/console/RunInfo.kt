@@ -31,7 +31,8 @@ internal class RunInfo(private val context: RunDashboardContext) {
 
     fun render(
         width: Int, height: Int, controlsEnabled: Boolean,
-        status: RunDashboardStatus = RunDashboardStatus.Running
+        status: RunDashboardStatus = RunDashboardStatus.Running,
+        prompt: String? = null,
     ): Widget {
         val columns = width.coerceAtLeast(1)
         val rows = (height - 1).coerceAtLeast(1)
@@ -55,7 +56,7 @@ internal class RunInfo(private val context: RunDashboardContext) {
                     Text(
                         when {
                             status == RunDashboardStatus.Quitting -> yellow("Quitting… waiting for cleanup")
-                            controlsEnabled -> runControls(RunConsolePage.Info, context.allowDiscard)
+                            controlsEnabled -> runFooter(RunConsolePage.Info, context.allowDiscard, prompt)
                             else -> ""
                         }
                     ), width = columns, height = 1

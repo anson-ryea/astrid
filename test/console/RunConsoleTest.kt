@@ -272,24 +272,27 @@ class RunConsoleTest {
     }
 
     @Test
-    fun ctrlCInRawModeCancelsTheRunAndRestoresInput() = runBlocking {
+    fun ctrlCBypassesAPendingDiscardPromptAndRestoresInput() = runBlocking {
         val recorder = TerminalRecorder(width = 120)
         val input = KeyboardTerminal(recorder)
-        assertFailsWith<CancellationException> {
+        val failure = assertFailsWith<CancellationException> {
             RunConsole(Terminal(terminalInterface = input), context).run {
-                withContext(Dispatchers.IO) {
-                    input.keys.put(KeyboardEvent("c", ctrl = true))
+                input.keys.add(KeyboardEvent("Q"))
+                withTimeout(3.seconds) {
+                    while (!recorder.output().contains("Quit and discard results? [y/n]")) delay(10.milliseconds)
                 }
+                input.keys.add(KeyboardEvent("c", ctrl = true))
                 awaitCancellation()
             }
         }
+        assertFalse(failure is RunQuitException)
         assertFalse(input.rawMode.get())
         assertContains(recorder.output(), "CANCELLED")
         assertTrue(recorder.output().endsWith("\u001b[?25h"))
     }
 
     @Test
-    fun quitKeysShowQuittingOnEveryPageUntilCleanupFinishes() = runBlocking {
+    fun quitPromptsOnEveryPageBeforeQuittingAndAcknowledgesCleanup() = runBlocking {
         for (page in RunConsolePage.entries) for (key in listOf(
             KeyboardEvent("q"), KeyboardEvent("c", ctrl = true), KeyboardEvent("Q"), KeyboardEvent("q", shift = true),
         )) {
@@ -335,8 +338,26 @@ class RunConsoleTest {
                         }; waitFor("i dashboard")
                     }
                 }
-                withContext(Dispatchers.IO) {
-                    input.keys.put(key)
+                val discard = key.key == "Q" || key.shift
+                if (!key.ctrl) {
+                    val prompt = if (discard) "Quit and discard results? [y/n]" else "Quit? [y/n]"
+                    input.keys.add(key)
+                    waitFor(prompt)
+                    assertFalse(screen().contains("q quit"))
+                    assertFalse(screen().contains("QUITTING"))
+                    assertFalse(cleaningUp.isCompleted)
+                    // The open prompt takes priority over other shortcuts and modified input.
+                    input.keys.add(KeyboardEvent("l"))
+                    input.keys.add(KeyboardEvent("y", ctrl = true))
+                    input.keys.add(KeyboardEvent("N"))
+                    waitFor("q quit")
+                    assertFalse(screen().contains(prompt))
+                    assertFalse(cleaningUp.isCompleted)
+                    input.keys.add(key)
+                    waitFor(prompt)
+                    input.keys.add(KeyboardEvent("Y"))
+                } else {
+                    input.keys.add(key)
                 }
                 withTimeout(3.seconds) { cleaningUp.await() }
                 assertContains(screen(), "QUITTING")
@@ -351,7 +372,7 @@ class RunConsoleTest {
                 assertTrue(result.exceptionOrNull() is CancellationException)
                 if (key.key.equals("q", ignoreCase = true)) {
                     assertEquals(
-                        key.key == "Q" || key.shift,
+                        discard,
                         (result.exceptionOrNull() as RunQuitException).discardResults
                     )
                 }
@@ -433,6 +454,7 @@ class RunConsoleTest {
                     if (page == RunConsolePage.Logs) input.keys.put(KeyboardEvent("l"))
                     if (page == RunConsolePage.Info) input.keys.put(KeyboardEvent("i"))
                     input.keys.put(KeyboardEvent(if (discard) "Q" else "q"))
+                    input.keys.put(KeyboardEvent("y"))
                     try {
                         awaitCancellation()
                     } finally {

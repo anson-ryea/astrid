@@ -21,7 +21,8 @@ internal class RunLogs(private val allowDiscard: Boolean = true) {
 
     fun render(
         width: Int, height: Int, controlsEnabled: Boolean,
-        status: RunDashboardStatus = RunDashboardStatus.Running
+        status: RunDashboardStatus = RunDashboardStatus.Running,
+        prompt: String? = null,
     ): Widget {
         val columns = width.coerceAtLeast(1)
         val rows = (height - 1).coerceAtLeast(1)
@@ -48,7 +49,7 @@ internal class RunLogs(private val allowDiscard: Boolean = true) {
                     Text(
                         when {
                             status == RunDashboardStatus.Quitting -> gray("Quitting… waiting for cleanup")
-                            controlsEnabled -> runControls(RunConsolePage.Logs, allowDiscard)
+                            controlsEnabled -> runFooter(RunConsolePage.Logs, allowDiscard, prompt)
                             else -> ""
                         }
                     ), width = columns, height = 1

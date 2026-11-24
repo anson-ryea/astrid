@@ -29,6 +29,7 @@ class RunDashboard(private val context: RunDashboardContext) {
         status: RunDashboardStatus = RunDashboardStatus.Running,
         controlsEnabled: Boolean = false,
         discardResults: Boolean = false,
+        prompt: String? = null,
     ): Widget {
         val contentWidth = width.coerceAtLeast(1)
         val completed = context.completedTasks(state)
@@ -198,7 +199,7 @@ class RunDashboard(private val context: RunDashboardContext) {
                     cell(line(badge + "  " + gray(detail)))
                 }
             }
-            cell(line(if (controlsEnabled) runControls(RunConsolePage.Dashboard, context.allowDiscard) else ""))
+            cell(line(if (controlsEnabled) runFooter(RunConsolePage.Dashboard, context.allowDiscard, prompt) else ""))
         }
         return Viewport(body, width = contentWidth)
     }

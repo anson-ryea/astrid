@@ -21,6 +21,11 @@ import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.TimeMark
 import kotlin.time.TimeSource
 
+private enum class QuitPrompt(val text: String, val discardResults: Boolean) {
+    Quit("Quit? [y/n]", false),
+    Discard("Quit and discard results? [y/n]", true),
+}
+
 /** Owns the event consumer and display for one run; no coroutines survive its completion. */
 class RunConsole(
     terminal: Terminal,
@@ -71,6 +76,7 @@ class RunConsole(
         val quitting = MutableStateFlow(false)
         val discarding = MutableStateFlow(false)
         val page = MutableStateFlow(RunConsolePage.Dashboard)
+        val quitPrompt = MutableStateFlow<QuitPrompt?>(null)
         val events = RunEventProcessor(this, onEventProcessed = { event ->
             event.logEntry()?.let { entry ->
                 if (live) logs.append(entry) else output.println(entry.renderMessage())
@@ -82,12 +88,27 @@ class RunConsole(
             val visibleStatus = if (quitting.value && status == RunDashboardStatus.Running)
                 RunDashboardStatus.Quitting else status
             val controls = rawMode != null && visibleStatus == RunDashboardStatus.Running
+            val prompt = quitPrompt.value?.text
             return when (page.value) {
-                RunConsolePage.Logs -> logs.render(output.size.width, output.size.height, controls, visibleStatus)
-                RunConsolePage.Info -> info.render(output.size.width, output.size.height, controls, visibleStatus)
+                RunConsolePage.Logs -> logs.render(
+                    output.size.width,
+                    output.size.height,
+                    controls,
+                    visibleStatus,
+                    prompt
+                )
+
+                RunConsolePage.Info -> info.render(
+                    output.size.width,
+                    output.size.height,
+                    controls,
+                    visibleStatus,
+                    prompt
+                )
                 RunConsolePage.Dashboard -> dashboard.render(
                     events.state.value, startedAt.elapsedNow(), output.size.width,
-                    output.size.height, visibleStatus, controlsEnabled = controls, discardResults = discarding.value
+                    output.size.height, visibleStatus, controlsEnabled = controls, discardResults = discarding.value,
+                    prompt = prompt,
                 )
             }
         }
@@ -103,6 +124,23 @@ class RunConsole(
         var keyboard: Job? = null
         // Keep the event consumer alive when quitting so saved milestones can still drain.
         val execution = async(start = CoroutineStart.LAZY) { runCatching { block(events::emit) } }
+        suspend fun quit(cause: CancellationException) {
+            val discard = cause is RunQuitException && cause.discardResults
+            discarding.value = discard
+            quitting.value = true
+            logs.append(
+                RunLogEntry(
+                    if (discard) "QUITTING: Stopping active tasks; current run output will be discarded"
+                    else "QUITTING: Stopping active tasks and finalising run metadata"
+                )
+            )
+            // Acknowledge before cancellation, then keep painting during worker cleanup.
+            try {
+                paint(RunDashboardStatus.Running)
+            } finally {
+                execution.cancel(cause)
+            }
+        }
         try {
             if (explainFallback) printMessage(
                 "This console cannot redraw a multi-line dashboard. Use a terminal tab for live output; showing plain progress.",
@@ -117,40 +155,45 @@ class RunConsole(
                     keyboard = launch {
                         while (isActive) {
                             val key = withContext(Dispatchers.IO) { input.readKeyOrNull(100.milliseconds) }
-                            when {
-                                key == null -> delay(10.milliseconds)
-                                key.isCtrlC || (key.key in listOf("q", "Q") && !key.ctrl && !key.alt) -> {
-                                    if (quitting.compareAndSet(expect = false, update = true)) {
-                                        val discard = allowDiscard && !key.isCtrlC && (key.key == "Q" || key.shift)
-                                        discarding.value = discard
-                                        logs.append(
-                                            RunLogEntry(
-                                                if (discard)
-                                                    "QUITTING: Stopping active tasks; current run output will be discarded"
-                                                else "QUITTING: Stopping active tasks and finalising run metadata"
-                                            )
-                                        )
-                                        // Acknowledge before cancellation, then keep painting during worker cleanup.
-                                        try {
-                                            paint(RunDashboardStatus.Running)
-                                        } finally {
-                                            execution.cancel(
-                                                if (key.isCtrlC) CancellationException("Run interrupted")
-                                                else RunQuitException(discardResults = discard)
-                                            )
-                                        }
+                            if (key == null) {
+                                delay(10.milliseconds)
+                                continue
+                            }
+                            if (quitting.value) continue
+                            if (key.isCtrlC) {
+                                quit(CancellationException("Run interrupted"))
+                                continue
+                            }
+                            if (key.ctrl || key.alt) continue
+
+                            val pending = quitPrompt.value
+                            if (pending != null) {
+                                when (key.key) {
+                                    "y", "Y" -> quit(RunQuitException(discardResults = pending.discardResults))
+                                    "n", "N" -> {
+                                        quitPrompt.value = null
+                                        paint(RunDashboardStatus.Running)
                                     }
                                 }
+                                continue
+                            }
 
-                                key.key == "l" && !key.ctrl && !key.alt -> page.update {
+                            when {
+                                key.key == "q" || key.key == "Q" -> {
+                                    quitPrompt.value = if (allowDiscard && (key.key == "Q" || key.shift))
+                                        QuitPrompt.Discard else QuitPrompt.Quit
+                                    paint(RunDashboardStatus.Running)
+                                }
+
+                                key.key == "l" -> page.update {
                                     if (it == RunConsolePage.Logs) RunConsolePage.Dashboard else RunConsolePage.Logs
                                 }
 
-                                key.key == "i" && !key.ctrl && !key.alt -> page.update {
+                                key.key == "i" -> page.update {
                                     if (it == RunConsolePage.Info) RunConsolePage.Dashboard else RunConsolePage.Info
                                 }
 
-                                page.value == RunConsolePage.Info && !key.ctrl && !key.alt -> when (key.key) {
+                                page.value == RunConsolePage.Info -> when (key.key) {
                                     "ArrowDown" -> info.scrollBy(1)
                                     "ArrowUp" -> info.scrollBy(-1)
                                     "PageDown" -> info.scrollBy((output.size.height - 4).coerceAtLeast(1))
