@@ -2,6 +2,8 @@ package run
 
 import ai.koog.prompt.llm.LLMProvider
 import ai.koog.prompt.llm.LLModel
+import analysis.RunAnalyser
+import analysis.SavedRunReader
 import domain.EvaluationResult
 import domain.TaskId
 import kotlinx.coroutines.Dispatchers
@@ -573,6 +575,83 @@ class FileRunStoreTest {
             })
             assertEquals(false, Files.exists(runDirectory.resolve("run.json")))
         }
+    }
+
+    @Test
+    fun refusesConcurrentResumeAndChangedRunSettings(): Unit = runBlocking {
+        val directory = temporaryDirectory.resolve("locked-run")
+        val original = specification()
+        FileRunStore(directory).use { active ->
+            active.begin(original, listOf(taskId))
+            FileRunStore(RunResume.open(directory)).use { second ->
+                val failure = assertFailsWith<IllegalStateException> { second.begin(original, listOf(taskId)) }
+                assertContains(failure.message.orEmpty(), "already in use")
+            }
+        }
+        // Simulate an abrupt exit that left run.json marked as running.
+        FileRunStore(RunResume.open(directory)).use { resumed ->
+            val failure = assertFailsWith<IllegalStateException> {
+                resumed.begin(original.copy(samplesPerTask = 2), listOf(taskId))
+            }
+            assertContains(failure.message.orEmpty(), "samples_per_task")
+        }
+        FileRunStore(RunResume.open(directory)).use { resumed ->
+            resumed.begin(original, listOf(taskId))
+            assertTrue(resumed.restoredSamples.isEmpty())
+            resumed.save(record())
+            resumed.complete()
+        }
+    }
+
+    @Test
+    fun resumesWithAnOverrideAndKeepsTheConfigurationOfEverySample() = runBlocking {
+        val directory = temporaryDirectory.resolve("override-run")
+        val original = specification(samplesPerTask = 2).copy(
+            generation = GenerationSettings(temperature = 0.2, seed = 42),
+            selection = TaskSelection(taskIds = setOf(taskId)),
+        )
+        val replacement = original.copy(model = original.model.copy(id = "replacement-model"), samplesPerTask = 3)
+        val reader = JsonBenchmarkRunConfigReader()
+        FileRunStore(directory).use { store ->
+            store.begin(original, listOf(taskId))
+            store.save(record())
+            store.fail("interrupted")
+        }
+        val first = directory.resolve("tasks/$taskId/samples/001/record.json")
+        val committed = Files.readString(first)
+        val savedOriginal = RunResume.open(directory)
+        assertEquals(original, savedOriginal.specification(savedOriginal.config(reader)))
+        val resume = RunResume.open(directory, allowConfigOverride = true)
+        FileRunStore(resume).use { store ->
+            store.begin(replacement, listOf(taskId))
+            store.save(record().copy(sampleIndex = 2))
+            store.fail("interrupted again")
+        }
+        FileRunStore(RunResume.open(directory, allowConfigOverride = true)).use { store ->
+            val failure = assertFailsWith<IllegalStateException> {
+                store.begin(replacement.copy(samplesPerTask = 1), listOf(taskId))
+            }
+            assertContains(failure.message.orEmpty(), "already has saved sample 2")
+        }
+
+        val latest = RunResume.open(directory)
+        val savedSettings = latest.specification(latest.config(reader))
+        assertEquals(replacement, savedSettings)
+        FileRunStore(latest).use { store ->
+            store.begin(savedSettings, listOf(taskId))
+            assertEquals(listOf(1, 2), store.restoredSamples.map { it.sampleIndex })
+            store.save(record().copy(sampleIndex = 3))
+            store.complete()
+        }
+        assertEquals(committed, Files.readString(first))
+        val saved = SavedRunReader().read(directory)
+        assertEquals("mixed", saved.modelId)
+        assertEquals(listOf(0, 1, 1), saved.samples.map { it.configurationIndex })
+        assertEquals(
+            "test-model", saved.configuration.getValue("previous_configurations").jsonArray.single()
+                .jsonObject.getValue("model").jsonObject.getValue("id").jsonPrimitive.content
+        )
+        assertEquals(0, RunAnalyser().analyse(saved, ks = listOf(1)).summaries.first().passAtK.single().eligibleTasks)
     }
 
     @Test

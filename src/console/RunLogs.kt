@@ -10,7 +10,7 @@ import com.github.ajalt.mordant.widgets.Text
 import com.github.ajalt.mordant.widgets.Viewport
 
 /** Keeps recent milestones even while the dashboard is visible. */
-internal class RunLogs {
+internal class RunLogs(private val allowDiscard: Boolean = true) {
     private val entries = ArrayDeque<String>()
 
     @Synchronized
@@ -48,7 +48,7 @@ internal class RunLogs {
                     Text(
                         when {
                             status == RunDashboardStatus.Quitting -> gray("Quitting… waiting for cleanup")
-                            controlsEnabled -> runControls(RunConsolePage.Logs)
+                            controlsEnabled -> runControls(RunConsolePage.Logs, allowDiscard)
                             else -> ""
                         }
                     ), width = columns, height = 1

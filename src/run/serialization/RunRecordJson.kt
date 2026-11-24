@@ -12,16 +12,25 @@ import workspace.WorkspaceFile
 internal object RunRecordJson {
     private val json = Json { prettyPrint = true }
 
+    fun configuration(metadata: JsonObject) = JsonObject(
+        metadata - setOf(
+            "schema_version", "status", "failure_reason", "task_ids", "task_metadata", "selection",
+            "previous_configurations",
+        )
+    )
+
     fun run(
         specification: BenchmarkRunSpecification,
         taskIds: List<TaskId>,
         status: String,
         taskMetadata: Map<TaskId, RunTaskMetadata>,
         failureReason: String? = null,
+        previousConfigurations: List<JsonObject> = emptyList(),
     ): JsonObject = buildJsonObject {
         put("schema_version", JsonPrimitive(1))
         put("status", JsonPrimitive(status))
         failureReason?.let { put("failure_reason", JsonPrimitive(it)) }
+        if (previousConfigurations.isNotEmpty()) put("previous_configurations", JsonArray(previousConfigurations))
         put("model", json.encodeToJsonElement(specification.model))
         put("generation", buildJsonObject {
             put("temperature", JsonPrimitive(specification.generation.temperature))
@@ -89,9 +98,10 @@ internal object RunRecordJson {
         })
     }
 
-    fun sample(record: TaskRunRecord): JsonObject =
+    fun sample(record: TaskRunRecord, configurationIndex: Int = 0): JsonObject =
         buildJsonObject {
             put("schema_version", JsonPrimitive(6))
+            if (configurationIndex > 0) put("configuration_index", configurationIndex)
             put("task_id", JsonPrimitive(record.taskId.value))
             put("sample_index", JsonPrimitive(record.sampleIndex))
             put("system_prompt", JsonPrimitive(record.systemPrompt))

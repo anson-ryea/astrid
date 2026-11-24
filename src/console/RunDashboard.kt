@@ -198,7 +198,7 @@ class RunDashboard(private val context: RunDashboardContext) {
                     cell(line(badge + "  " + gray(detail)))
                 }
             }
-            cell(line(if (controlsEnabled) runControls(RunConsolePage.Dashboard) else ""))
+            cell(line(if (controlsEnabled) runControls(RunConsolePage.Dashboard, context.allowDiscard) else ""))
         }
         return Viewport(body, width = contentWidth)
     }

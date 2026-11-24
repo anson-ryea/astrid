@@ -31,7 +31,7 @@ class JsonBenchmarkRunConfigReader {
         }
     }
 
-    private fun decode(document: JsonObject): BenchmarkRunConfig {
+    internal fun decode(document: JsonObject): BenchmarkRunConfig {
         document.requireFields(
             "run config",
             setOf(

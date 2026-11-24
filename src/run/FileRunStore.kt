@@ -7,15 +7,22 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import run.serialization.RunRecordJson
+import serialization.nonBlankString
 import java.io.BufferedWriter
 import java.io.IOException
+import java.nio.channels.FileChannel
+import java.nio.channels.FileLock
+import java.nio.channels.OverlappingFileLockException
 import java.nio.charset.StandardCharsets
 import java.nio.file.*
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.attribute.BasicFileAttributes
 
-/** Saves one run and its samples in a new directory. */
-class FileRunStore(runDirectory: Path) : RunStore {
+/** Saves one run and holds its exclusive directory lock through finalisation. */
+class FileRunStore private constructor(runDirectory: Path, private val resume: RunResume?) : RunStore, AutoCloseable {
+    constructor(runDirectory: Path) : this(runDirectory, null)
+    internal constructor(resume: RunResume) : this(resume.directory, resume)
+
     private val runDirectory = runDirectory.toAbsolutePath().normalize()
     private val json = Json { prettyPrint = true }
 
@@ -26,6 +33,10 @@ class FileRunStore(runDirectory: Path) : RunStore {
     private var finished = false
     private var createdDirectory = false
     private var directoryKey: Any? = null
+    private var runLock: FileLock? = null
+    private var previousConfigurations: List<JsonObject> = emptyList()
+    override var restoredSamples: List<RunEvent.SampleFinished> = emptyList()
+        private set
 
     override suspend fun begin(
         specification: BenchmarkRunSpecification,
@@ -46,20 +57,73 @@ class FileRunStore(runDirectory: Path) : RunStore {
             "run directory parent does not exist: $parent"
         }
 
-        // createDirectory fails if the run ID has already been used.
         withContext(Dispatchers.IO) {
-            Files.createDirectory(runDirectory)
-            createdDirectory = true
-            directoryKey = Files.readAttributes(runDirectory, BasicFileAttributes::class.java, NOFOLLOW_LINKS).fileKey()
-        }
-        writeAtomically(
-            target = runDirectory.resolve("run.json"),
-            value = RunRecordJson.run(specification, taskIds, "running", selectedTaskMetadata),
-            replace = false,
-        )
+            if (resume != null) {
+                check(Files.isDirectory(runDirectory, NOFOLLOW_LINKS)) { "run directory does not exist: $runDirectory" }
+            } else {
+                // createDirectory fails if the run ID has already been used.
+                Files.createDirectory(runDirectory)
+                createdDirectory = true
+                directoryKey =
+                    Files.readAttributes(runDirectory, BasicFileAttributes::class.java, NOFOLLOW_LINKS).fileKey()
+            }
 
-        activeSpecification = specification
-        selectedTaskIds = taskIds.toList()
+            val lockPath = runDirectory.resolve(".run.lock")
+            // A legacy writer with status "running" does not participate in locking.
+            if (resume != null && Files.notExists(lockPath, NOFOLLOW_LINKS)) {
+                check(RunResume.readMetadata(runDirectory).nonBlankString("status") == "failed") {
+                    "cannot resume an untracked running or completed run: $runDirectory"
+                }
+            }
+            acquireLock(lockPath)
+            try {
+                if (resume != null) {
+                    val expected = RunRecordJson.run(specification, taskIds, "running", selectedTaskMetadata)
+                    val restored = resume.restore(expected, taskIds, specification.samplesPerTask)
+                    restoredSamples = restored.samples
+                    previousConfigurations = restored.previousConfigurations
+                    savedSamples.addAll(restoredSamples.map { it.taskId to it.sampleIndex })
+                }
+                val metadata = RunRecordJson.run(
+                    specification, taskIds, "running", selectedTaskMetadata,
+                    previousConfigurations = previousConfigurations
+                )
+                writeAtomically(runDirectory.resolve("run.json"), metadata, replace = resume != null)
+                activeSpecification = specification
+                selectedTaskIds = taskIds.toList()
+            } catch (failure: Throwable) {
+                try {
+                    close()
+                } catch (cleanup: IOException) {
+                    failure.addSuppressed(cleanup)
+                }
+                throw failure
+            }
+        }
+    }
+
+    private fun acquireLock(path: Path) {
+        val channel = FileChannel.open(path, StandardOpenOption.CREATE, StandardOpenOption.WRITE, NOFOLLOW_LINKS)
+        try {
+            val locked = try {
+                channel.tryLock()
+            } catch (_: OverlappingFileLockException) {
+                null
+            }
+            runLock = checkNotNull(locked) { "run directory is already in use: $runDirectory" }
+        } finally {
+            if (runLock == null) channel.close()
+        }
+    }
+
+    /** Release after the caller has finished with this run, including any requested discard. */
+    override fun close() {
+        val lock = runLock ?: return
+        try {
+            lock.acquiredBy().close()
+        } finally {
+            runLock = null
+        }
     }
 
     override suspend fun save(record: TaskRunRecord) {
@@ -119,7 +183,7 @@ class FileRunStore(runDirectory: Path) : RunStore {
             // Publish the sample summary only after its outputs and trace exist.
             writeAtomically(
                 target = recordFile,
-                value = RunRecordJson.sample(record),
+                value = RunRecordJson.sample(record, previousConfigurations.size),
                 replace = false,
             )
         }
@@ -140,7 +204,10 @@ class FileRunStore(runDirectory: Path) : RunStore {
 
         writeAtomically(
             target = runDirectory.resolve("run.json"),
-            value = RunRecordJson.run(specification, selectedTaskIds, "complete", selectedTaskMetadata),
+            value = RunRecordJson.run(
+                specification, selectedTaskIds, "complete", selectedTaskMetadata,
+                previousConfigurations = previousConfigurations
+            ),
             replace = true,
         )
         finished = true
@@ -155,7 +222,10 @@ class FileRunStore(runDirectory: Path) : RunStore {
 
         writeAtomically(
             target = runDirectory.resolve("run.json"),
-            value = RunRecordJson.run(specification, selectedTaskIds, "failed", selectedTaskMetadata, reason),
+            value = RunRecordJson.run(
+                specification, selectedTaskIds, "failed", selectedTaskMetadata, reason,
+                previousConfigurations
+            ),
             replace = true,
         )
         finished = true

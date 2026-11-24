@@ -55,7 +55,7 @@ internal class RunInfo(private val context: RunDashboardContext) {
                     Text(
                         when {
                             status == RunDashboardStatus.Quitting -> yellow("Quitting… waiting for cleanup")
-                            controlsEnabled -> runControls(RunConsolePage.Info)
+                            controlsEnabled -> runControls(RunConsolePage.Info, context.allowDiscard)
                             else -> ""
                         }
                     ), width = columns, height = 1

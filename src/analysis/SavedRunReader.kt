@@ -6,6 +6,7 @@ import run.RunTaskMetadata
 import run.SampleBudget
 import run.SampleOutcome
 import run.serialization.EvaluationResultJson
+import run.serialization.RunRecordJson
 import run.serialization.SampleOutcomeJson
 import run.serialization.SampleResourcesJson
 import serialization.intValue
@@ -31,6 +32,8 @@ class SavedRunReader {
         }
         require(taskIds.isNotEmpty() && taskIds.distinct().size == taskIds.size) { "task_ids must be non-empty and unique" }
         val modelId = document.obj("model").string("id")
+        val previousConfigurations = document["previous_configurations"]?.jsonArray.orEmpty()
+        val models = previousConfigurations.map { it.jsonObject.obj("model").string("id") } + modelId
         val metadata = document["task_metadata"]?.let { value ->
             require(value is JsonObject) { "task_metadata must be an object" }
             require(value.keys.all { it in taskIds }) { "metadata contains unselected task IDs" }
@@ -60,24 +63,34 @@ class SavedRunReader {
                     "sample identity disagrees with its directory: $recordPath"
                 }
                 require(sample.sampleIndex in 1..samplesPerTask) { "sample index outside configured range: $recordPath" }
+                require(sample.configurationIndex in models.indices) { "unknown configuration index: $recordPath" }
                 samples += sample
             }
         }
         require(samples.map { it.taskId to it.sampleIndex }
             .distinct().size == samples.size) { "duplicate saved sample identities in $root" }
         val expected = taskIds.size.toLong() * samplesPerTask
+        val settingsUsed = samples.map { it.configurationIndex }.toSet()
+        val modelsUsed = settingsUsed.map { models[it] }.toSet()
+        val configurations = previousConfigurations + RunRecordJson.configuration(document)
+        val mixedConfigurations = settingsUsed.map { configurations[it] }.toSet().size > 1
         require(status != "complete" || samples.size.toLong() == expected) {
             "complete run is missing sample records: ${samples.size}/$expected in $root"
         }
         val warnings = buildList {
             if (status != "complete") add("Run is $status; saved-sample rates are provisional. Missing samples are reported separately.")
+            if (mixedConfigurations) add("Resume used different configurations. Acceptance counts describe the combined run, and pass@k is unavailable.")
             if (samples.any { it.resources == null }) add("Some samples have no normalised resource accounting; resource totals are unavailable for incomplete coverage. Historical trajectories are not used to guess usage.")
             if (samples.any { it.schemaVersion <= 3 }) add("Legacy sample schemas 1–3 cannot distinguish historical infrastructure, provider and budget failures; no diagnostic-text inference is applied.")
             if (metadata.size < taskIds.size) add("${taskIds.size - metadata.size} task(s) lack analysis metadata; their breakdown labels are unknown. Supply --dataset-root to enrich older runs.")
             if (metadata.values.any { it.source == "current_dataset" }) add("Some labels come from the current dataset checkout, not a historical snapshot; they do not establish experiment provenance.")
         }
         return SavedRun(
-            root, status, modelId, samplesPerTask, taskIds.sorted(), metadata,
+            root, status, when (modelsUsed.size) {
+                0 -> modelId
+                1 -> modelsUsed.single()
+                else -> "mixed"
+            }, samplesPerTask, taskIds.sorted(), metadata,
             samples.sortedWith(compareBy({ it.taskId }, { it.sampleIndex })),
             JsonObject(document.filterKeys {
                 it !in setOf(
@@ -87,7 +100,7 @@ class SavedRunReader {
                     "schema_version",
                     "failure_reason"
                 )
-            }), warnings
+            }), warnings, mixedConfigurations
         )
     }
 
@@ -182,7 +195,11 @@ class SavedRunReader {
                     require(it is JsonObject) { "resources must be an object or null" }
                     SampleResourcesJson.decode(it)
                 }
-            } else null)
+            } else null,
+            configurationIndex = value["configuration_index"]?.let {
+                requireNotNull(it.intValue()) { "'configuration_index' must be an integer" }
+            } ?: 0,
+        )
     }
 
     private fun verdict(value: JsonElement?, legacy: Boolean): SampleCategory =

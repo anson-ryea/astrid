@@ -21,3 +21,13 @@ internal fun resolveRunDirectory(workingDirectory: Path, outputRoot: Path, runId
         }
     }
 }
+
+/** Bare run names have the same syntax in both commands. */
+private val runIdPattern = Regex("[a-z0-9][a-z0-9_-]*")
+
+internal fun validateRunNameOrPath(value: String): String {
+    require(isRunPath(value) || runIdPattern.matches(value)) {
+        "run ID must use lower-case letters, digits, underscores or hyphens, or be a path"
+    }
+    return value
+}

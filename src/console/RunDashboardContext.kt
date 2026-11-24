@@ -17,6 +17,7 @@ data class RunDashboardContext(
     val runConfig: BenchmarkRunConfig? = null,
     val backendId: String? = null,
     val taskProblems: Map<TaskId, RunTaskProblem> = emptyMap(),
+    val allowDiscard: Boolean = true,
 ) {
     init {
         require(taskSubmissions.isNotEmpty()) { "dashboard requires at least one task" }

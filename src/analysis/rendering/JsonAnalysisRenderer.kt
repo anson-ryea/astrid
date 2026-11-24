@@ -18,6 +18,15 @@ internal object JsonAnalysisRenderer {
                     put("model_id", JsonPrimitive(run.modelId))
                     put("status", JsonPrimitive(run.status))
                     put("configuration", run.configuration)
+                    if ("previous_configurations" in run.configuration) {
+                        put("sample_configuration_indices", buildJsonObject {
+                            run.samples.groupBy { it.taskId }.forEach { (taskId, samples) ->
+                                put(taskId, buildJsonObject {
+                                    samples.forEach { put(it.sampleIndex.toString(), it.configurationIndex) }
+                                })
+                            }
+                        })
+                    }
                     put("warnings", JsonArray(run.warnings.map(::JsonPrimitive)))
                     put(
                         "sample_schema_versions",

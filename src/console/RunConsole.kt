@@ -28,6 +28,7 @@ class RunConsole(
     private val startedAt: TimeMark = TimeSource.Monotonic.markNow(),
     mode: RunConsoleMode = RunConsoleMode.Auto,
 ) {
+    private val allowDiscard = context.allowDiscard
     private val inputInteractive = terminal.terminalInfo.inputInteractive
     private val liveRequested = when (mode) {
         RunConsoleMode.Auto -> terminal.terminalInfo.outputInteractive
@@ -66,7 +67,7 @@ class RunConsole(
         // Initialise it and its SLF4J provider before drawing; only disable the startup banner.
         KotlinLoggingConfiguration.logStartupMessage = false
         KotlinLogging.logger("astrid.console")
-        val logs = RunLogs()
+        val logs = RunLogs(allowDiscard)
         val quitting = MutableStateFlow(false)
         val discarding = MutableStateFlow(false)
         val page = MutableStateFlow(RunConsolePage.Dashboard)
@@ -120,7 +121,7 @@ class RunConsole(
                                 key == null -> delay(10.milliseconds)
                                 key.isCtrlC || (key.key in listOf("q", "Q") && !key.ctrl && !key.alt) -> {
                                     if (quitting.compareAndSet(expect = false, update = true)) {
-                                        val discard = !key.isCtrlC && (key.key == "Q" || key.shift)
+                                        val discard = allowDiscard && !key.isCtrlC && (key.key == "Q" || key.shift)
                                         discarding.value = discard
                                         logs.append(
                                             RunLogEntry(

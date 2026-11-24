@@ -6,6 +6,8 @@ import domain.TaskId
 sealed interface RunEvent {
     data class RunPhaseChanged(val phase: RunPhase) : RunEvent
 
+    data class SamplesRestored(val samples: List<SampleFinished>) : RunEvent
+
     data class SampleStarted(
         val taskId: TaskId,
         val sampleIndex: Int,

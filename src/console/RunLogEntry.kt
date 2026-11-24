@@ -26,6 +26,7 @@ internal fun RunEvent.logEntry(): RunLogEntry? = when (this) {
         }
     )
 
+    is RunEvent.SamplesRestored -> RunLogEntry("Restored ${samples.size} saved samples")
     is RunEvent.SampleStarted -> RunLogEntry("Started $taskId · sample $sampleIndex")
     is RunEvent.SampleFinished -> {
         val (label, colour) = when (val outcome = outcome) {

@@ -4,12 +4,16 @@
   "model": {
     "id": "deepseek/deepseek-v4.1-flash",
     "context_length": 1048576,
-    "max_output_tokens": null,
+    "max_output_tokens": 131072,
     "supports_tools": true
   },
-  "samples_per_task": 1,
-  "max_repair_turns": 1,
+  "samples_per_task": 3,
+  "max_concurrent_tasks": 4,
+  "max_repair_turns": 2,
+  "max_agent_iterations": 80,
   "max_tool_calls_per_attempt": null,
   "max_workspace_tool_calls_per_attempt": null,
-  "max_agent_iterations": 80
+  "limits": {
+    "sample_timeout": "PT30M"
+  }
 }

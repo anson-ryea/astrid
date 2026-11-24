@@ -32,16 +32,25 @@ class BenchmarkRunner(
         )
 
         try {
+            val restored = store.restoredSamples
+            if (restored.isNotEmpty()) onEvent(RunEvent.SamplesRestored(restored))
+            val savedByTask = restored.groupBy({ it.taskId }, { it.sampleIndex })
+                .mapValues { (_, indices) -> indices.toSet() }
+            val remainingTasks = tasks.filter {
+                savedByTask[it.manifest.taskId].orEmpty().size < engine.specification.samplesPerTask
+            }
             val saveMutex = Mutex()
             coroutineScope {
-                val pendingTasks = Channel<BenchmarkTask>(tasks.size)
-                tasks.forEach { pendingTasks.send(it) }
+                val pendingTasks = Channel<BenchmarkTask>(remainingTasks.size)
+                remainingTasks.forEach { pendingTasks.send(it) }
                 pendingTasks.close()
-                List(minOf(engine.specification.maxConcurrentTasks, tasks.size)) {
+                List(minOf(engine.specification.maxConcurrentTasks, remainingTasks.size)) {
                     // Preparation and evaluation also perform blocking file and process I/O.
                     async(Dispatchers.IO) {
                         for (task in pendingTasks) {
+                            val saved = savedByTask[task.manifest.taskId].orEmpty()
                             for (sampleIndex in 1..engine.specification.samplesPerTask) {
+                                if (sampleIndex in saved) continue
                                 onEvent(RunEvent.SampleStarted(task.manifest.taskId, sampleIndex))
                                 // Every evaluation outcome is a sample result, not a run error.
                                 engine.run(task, sampleIndex, onEvent = onEvent) { record ->

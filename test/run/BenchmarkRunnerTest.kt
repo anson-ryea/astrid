@@ -331,6 +331,59 @@ class BenchmarkRunnerTest {
     }
 
     @Test
+    fun resumesMissingSamplesAfterCancellationAndKeepsSavedOutcomes() = runBlocking {
+        val task = createRunTask(temporaryDirectory)
+        val taskId = task.manifest.taskId
+        val specification = runTestSpecification(samplesPerTask = 3)
+        val directory = temporaryDirectory.resolve("resume-run")
+        val secondStarted = CompletableDeferred<Unit>()
+        val calls = AtomicInteger()
+        val executor = ScriptedPromptExecutor(listOf("first proof", "interrupted proof")) {
+            if (calls.incrementAndGet() == 2) {
+                secondStarted.complete(Unit)
+                awaitCancellation()
+            }
+            Message.Assistant(it, ResponseMetaInfo.Empty)
+        }
+        FileRunStore(directory).use { store ->
+            val firstRun = runner(
+                listOf(task), executor, store, specification,
+                assessSubmission = { _, _ -> EvaluationResult.NeedsReview("uncertified result") })
+            withTimeout(10_000.milliseconds) {
+                val running = async { firstRun.run() }
+                secondStarted.await()
+                running.cancelAndJoin()
+            }
+        }
+
+        val samples = directory.resolve("tasks/$taskId/samples")
+        Files.delete(directory.resolve(".run.lock")) // A run from before locking was introduced.
+        val firstRecord = Files.readString(samples.resolve("001/record.json"))
+        assertFalse(Files.exists(samples.resolve("002/record.json")))
+        val partial = Files.createDirectories(samples.resolve("002"))
+        Files.writeString(partial.resolve("trajectory.jsonl"), "interrupted write")
+
+        val events = ConcurrentLinkedQueue<RunEvent>()
+        FileRunStore(RunResume.open(directory)).use { store ->
+            runner(
+                listOf(task), ScriptedPromptExecutor(listOf("new second proof", "third proof")), store,
+                specification, onEvent = { events.add(it) }).run()
+        }
+        val restored = events.filterIsInstance<RunEvent.SamplesRestored>().single().samples.single()
+        assertEquals(1, restored.sampleIndex)
+        assertEquals(SampleOutcome.Evaluated(EvaluationResult.NeedsReview("uncertified result")), restored.outcome)
+        assertEquals(listOf(2, 3), events.filterIsInstance<RunEvent.SampleStarted>().map { it.sampleIndex })
+        assertEquals(firstRecord, Files.readString(samples.resolve("001/record.json")))
+        assertTrue(Files.readString(samples.resolve("002/record.json")).contains("new second proof"))
+        assertTrue(Files.isRegularFile(samples.resolve("003/record.json")))
+        val archive = Files.list(directory).use { paths ->
+            paths.toList().single { it.fileName.toString().startsWith(".interrupted-") }
+        }
+        assertEquals("interrupted write", Files.readString(archive.resolve("$taskId-002/trajectory.jsonl")))
+        assertEquals("complete", RunResume.readMetadata(directory).getValue("status").jsonPrimitive.content)
+    }
+
+    @Test
     fun propagatesCancellationThrownByAnExecutor() = runBlocking {
         val task = createRunTask(temporaryDirectory)
         val executor = ScriptedPromptExecutor(listOf("cancel")) { throw CancellationException("cancelled") }

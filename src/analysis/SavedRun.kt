@@ -13,4 +13,5 @@ data class SavedRun(
     val samples: List<SavedSample>,
     val configuration: JsonObject,
     val warnings: List<String>,
+    val mixedConfigurations: Boolean = false,
 )

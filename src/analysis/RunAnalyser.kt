@@ -39,7 +39,7 @@ class RunAnalyser {
                 taskMacroFinalRate = taskRates.meanOrNull(),
                 paperMacroFinalRate = paperRates.meanOrNull(),
                 passAtK = sortedKs.map { k ->
-                    val eligible = if (run.samplesPerTask >= k) complete else emptyList()
+                    val eligible = if (!run.mixedConfigurations && run.samplesPerTask >= k) complete else emptyList()
                     fun estimate(first: Boolean) = eligible.map { id ->
                         val values = samplesByTask.getValue(id)
                         passAtK(

@@ -13,4 +13,5 @@ data class SavedSample(
     val firstAttemptAssessed: Boolean,
     val recordedRepairTurns: Int,
     val resources: SampleResources? = null,
+    val configurationIndex: Int = 0,
 )

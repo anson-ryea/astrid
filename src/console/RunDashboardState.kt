@@ -28,6 +28,8 @@ data class RunDashboardState(
 
     internal fun reduce(event: RunEvent): RunDashboardState = when (event) {
         is RunEvent.RunPhaseChanged -> copy(runPhase = event.phase, latestEvent = event)
+        is RunEvent.SamplesRestored -> event.samples.fold(this) { state, sample -> state.reduce(sample) }
+            .copy(latestEvent = event)
         is RunEvent.SampleStarted -> copy(
             activeSamples = activeSamples + (SampleKey(event.taskId, event.sampleIndex) to SamplePhase.Preparing),
             latestEvent = event,

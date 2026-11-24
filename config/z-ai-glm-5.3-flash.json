@@ -1,0 +1,19 @@
+{
+  "$schema": "../schemas/run-config-v1.schema.json",
+  "schema_version": 1,
+  "model": {
+    "id": "z-ai/glm-5.3-flash",
+    "context_length": 1048576,
+    "max_output_tokens": 131072,
+    "supports_tools": true
+  },
+  "samples_per_task": 2,
+  "max_concurrent_tasks": 4,
+  "max_repair_turns": 2,
+  "max_agent_iterations": 80,
+  "max_tool_calls_per_attempt": 0,
+  "max_workspace_tool_calls_per_attempt": null,
+  "limits": {
+    "sample_timeout": "PT30M"
+  }
+}

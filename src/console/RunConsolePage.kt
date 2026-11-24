@@ -5,7 +5,7 @@ import com.github.ajalt.mordant.rendering.TextStyles.bold
 
 internal enum class RunConsolePage { Dashboard, Logs, Info }
 
-internal fun runControls(page: RunConsolePage): String {
+internal fun runControls(page: RunConsolePage, allowDiscard: Boolean): String {
     fun key(key: String, label: String) = bold(key) + gray(" $label")
     val links = when (page) {
         RunConsolePage.Dashboard -> listOf(key("l", "logs"), key("i", "info"))
@@ -15,6 +15,6 @@ internal fun runControls(page: RunConsolePage): String {
     return buildList {
         addAll(links)
         add(key("q", "quit"))
-        add(key("Q", "discard"))
+        if (allowDiscard) add(key("Q", "discard"))
     }.joinToString(gray(" · "))
 }

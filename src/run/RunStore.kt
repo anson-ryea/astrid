@@ -4,6 +4,10 @@ import domain.TaskId
 
 /** Persists run metadata and each completed sample. */
 interface RunStore {
+    /** Samples already committed to this run when it was opened. */
+    val restoredSamples: List<RunEvent.SampleFinished>
+        get() = emptyList()
+
     suspend fun begin(
         specification: BenchmarkRunSpecification,
         taskIds: List<TaskId>,
